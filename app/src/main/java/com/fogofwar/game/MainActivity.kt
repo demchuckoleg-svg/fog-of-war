@@ -197,10 +197,10 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
         for (player in state.players) {
             val row = TextView(this).apply {
                 text = buildString {
-                    append(if (player.isBot) "🤖 " else if (state.isHost && player.slot == 0) "👑 " else "• ")
+                    append(if (player.isBot) "🤖 " else if (player.slot == 0) "👑 " else "• ")
                     append(player.name)
                     if (player.wins > 0) append("   (${player.wins} 🏆)")
-                    if (state.isHost && player.slot == state.mySlot) append("  — вы")
+                    if (player.slot == state.mySlot) append("  — вы")
                 }
                 textSize = 16f
                 setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text))

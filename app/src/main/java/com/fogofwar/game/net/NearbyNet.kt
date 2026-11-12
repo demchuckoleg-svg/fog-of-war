@@ -76,6 +76,7 @@ class NearbyNet(context: Context) {
     private var hostEndpoint: String? = null
     private var status: String? = null
     private var inputSeq = 0
+    private var sessionGeneration = 0
 
     // ------------------------------------------------------------- public API
 
@@ -129,10 +130,11 @@ class NearbyNet(context: Context) {
 
     fun stopDiscovery() {
         client?.stopDiscovery()
+        discovered.clear()
         if (!isHost && roomState == RoomState.DISCOVERING) {
             roomState = RoomState.IDLE
-            notifyLobby()
         }
+        notifyLobby()
     }
 
     fun connectToHost(endpointId: String) {
@@ -192,20 +194,23 @@ class NearbyNet(context: Context) {
     }
 
     fun leaveGame() {
-        if (isHost) {
-            leaveRoom()
-        } else {
-            resetToIdle(notify = true)
-        }
+        leaveRoom()
     }
 
     fun leaveRoom() {
-        if (isHost && roomState != RoomState.IDLE) {
+        if (isHost) {
             broadcastRaw(Protocol.roomClosed("Хост закрыл комнату"))
-            mainHandler.postDelayed({ resetToIdle(notify = true) }, 150L)
-        } else {
-            resetToIdle(notify = true)
         }
+        hostRound?.stop()
+        hostRound = null
+        clientRound = null
+        roomState = RoomState.IDLE
+        status = null
+        notifyLobby()
+        val generation = ++sessionGeneration
+        mainHandler.postDelayed({
+            if (generation == sessionGeneration) resetToIdle(notify = true)
+        }, 250L)
     }
 
     fun reportError(message: String) {
@@ -271,6 +276,9 @@ class NearbyNet(context: Context) {
     }
 
     private fun resetToIdle(notify: Boolean = true) {
+        sessionGeneration++
+        isHost = false
+        hostEndpoint = null
         hostRound?.stop()
         hostRound = null
         clientRound = null
@@ -282,8 +290,6 @@ class NearbyNet(context: Context) {
         slotByEndpoint.clear()
         pendingNames.clear()
         discovered.clear()
-        hostEndpoint = null
-        isHost = false
         roomState = RoomState.IDLE
         mySlot = 0
         lastWinner = null

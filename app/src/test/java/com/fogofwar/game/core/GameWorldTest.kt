@@ -26,6 +26,20 @@ class GameWorldTest {
     }
 
     @Test
+    fun mapsHaveEnoughCoverAndWater() {
+        for (id in 0..3) {
+            val map = MapGenerator.generate(id, 33L)
+            val bricks = map.tiles.count { it.toInt() == Tile.BRICK.ordinal }
+            val steel = map.tiles.count { it.toInt() == Tile.STEEL.ordinal }
+            assertTrue("map $id is too empty (brick=$bricks steel=$steel)", bricks + steel > 150)
+            if (id == 2) {
+                val water = map.tiles.count { it.toInt() == Tile.WATER.ordinal }
+                assertTrue("bridges map has no water", water > 100)
+            }
+        }
+    }
+
+    @Test
     fun everySpawnIsClearOnEveryMap() {
         for (id in 0..3) {
             val map = MapGenerator.generate(id, 42L)
