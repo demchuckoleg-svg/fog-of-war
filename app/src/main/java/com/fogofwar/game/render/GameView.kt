@@ -718,6 +718,8 @@ class GameView @JvmOverloads constructor(
     private fun drawEnemyBeams(canvas: Canvas, frame: GameFrame) {
         for (tank in frame.tanks) {
             if (!tank.alive || tank.slot == frame.mySlot || !tank.lightsOn) continue
+            if (tank.x < camera.worldLeft - 400f || tank.x > camera.worldRight + 400f) continue
+            if (tank.y < camera.worldTop - 400f || tank.y > camera.worldBottom + 400f) continue
             buildCone(enemyPath, frame, tank, GameConfig.LIGHT_RANGE * 0.9f, GameConfig.LIGHT_HALF_ANGLE)
             beamPaint.color = 0x0DFFE0A0
             canvas.drawPath(enemyPath, beamPaint)
