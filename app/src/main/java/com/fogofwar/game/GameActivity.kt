@@ -43,7 +43,7 @@ class GameActivity : AppCompatActivity(), NearbyNet.Listener {
 
     override fun onResume() {
         super.onResume()
-        net.setListener(this)
+        net.attachListener(this)
         binding.gameView.resumeRendering()
         if (net.roomState != RoomState.IN_GAME) finish()
     }

@@ -79,11 +79,11 @@ class NearbyNet(context: Context) {
 
     // ------------------------------------------------------------- public API
 
-    fun setNickname(name: String) {
+    fun updateNickname(name: String) {
         nickname = name.trim().ifBlank { "Танк" }.take(16)
     }
 
-    fun setListener(l: Listener?) {
+    fun attachListener(l: Listener?) {
         listener = l
     }
 

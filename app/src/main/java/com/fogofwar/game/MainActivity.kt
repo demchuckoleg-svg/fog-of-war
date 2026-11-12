@@ -56,10 +56,10 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
 
         val savedName = prefs.getString("nickname", null) ?: "Игрок"
         binding.nicknameInput.setText(savedName)
-        net.setNickname(savedName)
+        net.updateNickname(savedName)
         binding.nicknameInput.doAfterTextChanged { editable ->
             val name = editable?.toString().orEmpty()
-            net.setNickname(name)
+            net.updateNickname(name)
             prefs.edit().putString("nickname", name).apply()
         }
 
@@ -93,7 +93,7 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
 
     override fun onResume() {
         super.onResume()
-        net.setListener(this)
+        net.attachListener(this)
         render(net.lobbySnapshot())
     }
 
