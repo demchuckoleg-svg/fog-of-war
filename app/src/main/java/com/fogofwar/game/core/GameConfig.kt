@@ -50,7 +50,7 @@ object GameConfig {
     const val LIGHT_RANGE = 260f
     const val LIGHT_HALF_ANGLE = 0.40f
     const val LIGHT_RAYS = 44
-    const val LIGHT_SELF_RADIUS = 46f
+    const val LIGHT_SELF_RADIUS = 38f
 
     /** Pickups. */
     const val PICKUP_INTERVAL = 18f

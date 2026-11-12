@@ -643,7 +643,7 @@ class GameView @JvmOverloads constructor(
             if (me.lightsOn) {
                 glowPaint.shader = RadialGradient(
                     me.x, me.y, range,
-                    intArrayOf(0x3CFFF1C4, 0x14FFD98A, 0x00FFD98A),
+                    intArrayOf(0x5AFFF1C4, 0x24FFD98A, 0x00FFD98A),
                     floatArrayOf(0f, 0.55f, 1f),
                     Shader.TileMode.CLAMP,
                 )
@@ -659,7 +659,7 @@ class GameView @JvmOverloads constructor(
             }
             glowPaint.shader = RadialGradient(
                 me.x, me.y, 85f,
-                intArrayOf(0x22FFF1C4, 0x00FFF1C4),
+                intArrayOf(0x2EFFF1C4, 0x00FFF1C4),
                 floatArrayOf(0f, 1f),
                 Shader.TileMode.CLAMP,
             )
@@ -1020,7 +1020,7 @@ class GameView @JvmOverloads constructor(
 
     companion object {
         private val COLOR_VOID = 0xFF05070A.toInt()
-        private val COLOR_GROUND = 0xFF10160F.toInt()
+        private val COLOR_GROUND = 0xFF1A221A.toInt()
         private val COLOR_ME = 0xFF57D68B.toInt()
         private val COLOR_DIM = 0xFF8A9A92.toInt()
         private val COLOR_TEXT = 0xFFE6ECE9.toInt()
