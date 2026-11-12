@@ -152,7 +152,8 @@ class GameWorld(
             val frameDistance = GameConfig.BULLET_SPEED * dt
             val steps = max(1, ceil(frameDistance / 8f).toInt())
             var removed = false
-            for (i in 0 until steps && !removed) {
+            for (i in 0 until steps) {
+                if (removed) break
                 bullet.x += bullet.vx * dt / steps
                 bullet.y += bullet.vy * dt / steps
                 bullet.travelled += frameDistance / steps

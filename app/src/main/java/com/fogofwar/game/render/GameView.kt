@@ -560,7 +560,7 @@ class GameView @JvmOverloads constructor(
         canvas.drawCircle(knobX, knobY, joyKnobRadius, hudPaint)
 
         // Fire button.
-        hudPaint.color = if (firing) 0x99FF5252 else 0x33FF5252
+        hudPaint.color = if (firing) 0x99FF5252.toInt() else 0x33FF5252
         canvas.drawCircle(fireX, fireY, fireRadius, hudPaint)
         strokePaint.color = if (firing) 0xFFFF8080.toInt() else 0x66FF8080
         strokePaint.strokeWidth = 2.5f * density
