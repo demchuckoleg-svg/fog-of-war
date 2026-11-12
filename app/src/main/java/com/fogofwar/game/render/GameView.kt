@@ -501,8 +501,11 @@ class GameView @JvmOverloads constructor(
                 spriteRect.set(x, y, x + GameConfig.TILE, y + GameConfig.TILE)
                 when (tile) {
                     Tile.EMPTY -> {
-                        val variant = (tx * 31 + ty * 17) and 3
-                        canvas.drawBitmap(SpriteAtlas.ground(variant), null, spriteRect, spritePaint)
+                        // Sparse detail: the base ground rect already covers the surface.
+                        if (((tx * 31 + ty * 17) and 1) == 0) {
+                            val variant = (tx * 31 + ty * 17) and 3
+                            canvas.drawBitmap(SpriteAtlas.ground(variant), null, spriteRect, spritePaint)
+                        }
                     }
                     Tile.WATER -> {
                         val frameIndex = ((now / 420L) + tx + ty).toInt() and 1
@@ -727,7 +730,7 @@ class GameView @JvmOverloads constructor(
     private fun buildCone(path: Path, frame: GameFrame, tank: RenderTank, range: Float, half: Float) {
         path.reset()
         path.moveTo(tank.x, tank.y)
-        val rays = 18
+        val rays = 14
         val start = tank.turretDir - half
         val span = half * 2f
         for (i in 0 until rays) {
@@ -743,7 +746,7 @@ class GameView @JvmOverloads constructor(
                     hitY = y - sin(angle) * 3f
                     break
                 }
-                t += 6f
+                t += 8f
             }
             path.lineTo(hitX, hitY)
         }
