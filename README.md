@@ -23,7 +23,7 @@
 **Actions → Android CI → последний запуск → Artifacts → `fog-of-war-apk`**.
 
 Самая свежая сборка также публикуется в релиз **latest**:
-https://github.com/demchuckoleg-svg/fog-of-war/releases/latest/download/fog-of-war-latest.apk
+https://github.com/demchuckoleg-svg/fog-of-war/releases/download/latest/fog-of-war-latest.apk
 
 APK подписан одним и тем же ключом (`keystore/release.p12`), а `versionCode` растёт с каждым
 запуском CI, поэтому новая сборка ставится поверх предыдущей без удаления приложения.

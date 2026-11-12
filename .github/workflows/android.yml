@@ -63,7 +63,8 @@ jobs:
           name: Latest build
           body: |
             Автоматическая сборка из `master`, build #${{ github.run_number }}.
-            Прямая ссылка для установки на телефон: этот APK ставится поверх предыдущей версии.
+            Прямая ссылка: https://github.com/demchuckoleg-svg/fog-of-war/releases/download/latest/fog-of-war-latest.apk
+            APK подписан тем же ключом и ставится поверх предыдущей версии.
           files: out/fog-of-war-latest.apk
 
       - name: Publish GitHub release for tags
