@@ -126,4 +126,21 @@ class GameWorldTest {
         assertTrue(world.sonarActive)
         assertTrue(world.sonarRadius > 0f)
     }
+
+    @Test
+    fun sixtySecondBotRoundStaysValid() {
+        val world = GameWorld(MapGenerator.generate(0, 77L), 0, 77L)
+        world.addPlayer(0, "player")
+        for (slot in 1..4) world.addBot(slot, "bot$slot")
+        repeat(GameConfig.TICK_HZ * 60) {
+            world.step(GameConfig.TICK_DT)
+            for (tank in world.tanks) {
+                assertTrue("x out of bounds: ${tank.x}", tank.x in 0f..GameConfig.WORLD_SIZE)
+                assertTrue("y out of bounds: ${tank.y}", tank.y in 0f..GameConfig.WORLD_SIZE)
+                assertTrue("bad hp: ${tank.hp}", tank.hp in 0..GameConfig.MAX_HP)
+            }
+            assertTrue(world.zoneRadius >= GameConfig.ZONE_MIN_RADIUS)
+        }
+        assertFalse(world.bullets.any { it.travelled > GameConfig.BULLET_MAX_RANGE + 50f })
+    }
 }
