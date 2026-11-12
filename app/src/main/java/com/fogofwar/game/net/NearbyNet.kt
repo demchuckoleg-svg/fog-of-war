@@ -169,7 +169,7 @@ class NearbyNet(context: Context) {
         if (players.size == 1) {
             for (i in 1..4) players.add(PlayerInfo(i, "Бот $i", 0, true))
         }
-        val seed = System.nanoTime() xor (System.currentTimeMillis() shl 7)
+        val seed = GameConfig.MAP_SEED
         roomState = RoomState.IN_GAME
         lastWinner = null
         status = null
@@ -229,6 +229,7 @@ class NearbyNet(context: Context) {
 
     internal fun pushEffects(events: List<EffectEvent>) {
         for (event in events) effectQueue.add(event)
+        while (effectQueue.size > 160) effectQueue.poll()
     }
 
     fun currentFrame(): GameFrame? {

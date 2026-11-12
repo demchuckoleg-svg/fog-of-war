@@ -27,12 +27,12 @@ class MapPreviewView @JvmOverloads constructor(
         set(value) {
             if (field == value) return
             field = value
-            map = MapGenerator.generate(value, PREVIEW_SEED)
+            map = MapGenerator.generate(value, GameConfig.MAP_SEED)
             invalidate()
         }
 
     override fun onDraw(canvas: Canvas) {
-        val map = this.map ?: MapGenerator.generate(0, PREVIEW_SEED).also { this.map = it }
+        val map = this.map ?: MapGenerator.generate(0, GameConfig.MAP_SEED).also { this.map = it }
         val scale = min(width.toFloat() / map.width, height.toFloat() / map.height)
         val offsetX = (width - map.width * scale) / 2f
         val offsetY = (height - map.height * scale) / 2f
@@ -86,7 +86,4 @@ class MapPreviewView @JvmOverloads constructor(
         )
     }
 
-    private companion object {
-        const val PREVIEW_SEED = 90210L
-    }
 }

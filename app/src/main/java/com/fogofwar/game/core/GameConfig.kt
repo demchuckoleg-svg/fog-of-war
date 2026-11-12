@@ -4,6 +4,8 @@ package com.fogofwar.game.core
 object GameConfig {
     const val TILE = 32f
     const val MAP_TILES = 64
+    /** Every round on a given map uses this seed, so the lobby preview matches the real map. */
+    const val MAP_SEED = 90210L
     const val WORLD_SIZE = TILE * MAP_TILES
 
     const val TICK_HZ = 30

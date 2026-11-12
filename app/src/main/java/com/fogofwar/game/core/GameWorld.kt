@@ -339,6 +339,7 @@ class GameWorld(
             for (tank in tanks) {
                 if (!tank.alive) continue
                 if (hypot(tank.x - pickup.x, tank.y - pickup.y) <= GameConfig.PICKUP_RADIUS) {
+                    if (pickup.type == GameConfig.PICKUP_REPAIR && tank.hp >= GameConfig.MAX_HP) continue
                     applyPickup(tank, pickup)
                     pickups.remove(pickup)
                     break
