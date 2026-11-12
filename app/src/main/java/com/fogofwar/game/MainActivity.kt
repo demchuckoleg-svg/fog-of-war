@@ -29,6 +29,7 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
 
     private var pendingAction: PendingAction = PendingAction.NONE
     private var suppressSpinner = false
+    private var resumeDiscovery = false
     private var lastState: LobbyUiState = LobbyUiState()
 
     private enum class PendingAction { NONE, HOST, DISCOVER }
@@ -97,13 +98,19 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
         render(net.lobbySnapshot())
         if (net.roomState == RoomState.IN_GAME) {
             startActivity(Intent(this, GameActivity::class.java))
+        } else if (resumeDiscovery) {
+            resumeDiscovery = false
+            if (net.roomState == RoomState.IDLE) net.startDiscovery()
         }
     }
 
     override fun onPause() {
         super.onPause()
         net.clearListener(this)
-        if (net.roomState == RoomState.DISCOVERING) net.stopDiscovery()
+        if (net.roomState == RoomState.DISCOVERING) {
+            resumeDiscovery = true
+            net.stopDiscovery()
+        }
     }
 
     private fun ensurePermissions(action: PendingAction) {
@@ -223,7 +230,7 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
             suppressSpinner = false
         }
 
-        binding.lobbyHint.text = when {
+        binding.lobbyHint.text = state.status ?: when {
             !host -> "Карта: ${MapGenerator.MAP_NAMES.getOrElse(state.mapId) { "?" }}. " +
                 getString(R.string.waiting_for_host)
             state.players.size <= 1 -> getString(R.string.solo_hint)

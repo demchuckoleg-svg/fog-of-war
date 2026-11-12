@@ -84,6 +84,9 @@ class NearbyNet(context: Context) {
     private var inputSeq = 0
     private var sessionGeneration = 0
     private var lastRoundMapId = -1
+    private var connectToken = 0
+    private var discoveryRetries = 0
+    private var discoveryRetry: Runnable? = null
     private val effectQueue = java.util.concurrent.ConcurrentLinkedQueue<EffectEvent>()
 
     // ------------------------------------------------------------- public API
@@ -134,16 +137,46 @@ class NearbyNet(context: Context) {
         roomState = RoomState.DISCOVERING
         status = null
         discovered.clear()
-        val options = DiscoveryOptions.Builder().setStrategy(Strategy.P2P_STAR).build()
-        client.startDiscovery(SERVICE_ID, discoveryCallback, options)
-            .addOnFailureListener { e ->
-                if (roomState == RoomState.DISCOVERING) roomState = RoomState.IDLE
-                reportError("Поиск не запустился: ${e.message}")
-            }
+        discoveryRetries = 0
+        launchDiscovery()
+        scheduleDiscoveryRetry()
         notifyLobby()
     }
 
+    private fun launchDiscovery() {
+        val options = DiscoveryOptions.Builder().setStrategy(Strategy.P2P_STAR).build()
+        client?.startDiscovery(SERVICE_ID, discoveryCallback, options)
+            ?.addOnFailureListener { e ->
+                if (roomState == RoomState.DISCOVERING) {
+                    roomState = RoomState.IDLE
+                    cancelDiscoveryRetry()
+                }
+                reportError("Поиск не запустился: ${e.message}")
+            }
+    }
+
+    /** Nearby discovery sometimes goes quiet; retry a few times while nothing is found. */
+    private fun scheduleDiscoveryRetry() {
+        cancelDiscoveryRetry()
+        if (discoveryRetries >= 3) return
+        val runnable = Runnable {
+            if (isHost || roomState != RoomState.DISCOVERING || discovered.isNotEmpty()) return@Runnable
+            discoveryRetries++
+            client?.stopDiscovery()
+            launchDiscovery()
+            scheduleDiscoveryRetry()
+        }
+        discoveryRetry = runnable
+        mainHandler.postDelayed(runnable, 9_000L)
+    }
+
+    private fun cancelDiscoveryRetry() {
+        discoveryRetry?.let { mainHandler.removeCallbacks(it) }
+        discoveryRetry = null
+    }
+
     fun stopDiscovery() {
+        cancelDiscoveryRetry()
         client?.stopDiscovery()
         discovered.clear()
         if (!isHost && roomState == RoomState.DISCOVERING) {
@@ -157,10 +190,23 @@ class NearbyNet(context: Context) {
         hostEndpoint = endpointId
         roomState = RoomState.CONNECTING
         status = "Подключение…"
+        cancelDiscoveryRetry()
         client.stopDiscovery()
         notifyLobby()
+        val token = ++connectToken
+        mainHandler.postDelayed({
+            if (token == connectToken && roomState == RoomState.CONNECTING) {
+                resetToIdle(notify = false)
+                reportError("Хост не отвечает. Попробуйте найти игру ещё раз.")
+            }
+        }, 15_000L)
         client.requestConnection(nickname, endpointId, connectionCallback)
-            .addOnFailureListener { e -> reportError("Подключение не удалось: ${e.message}") }
+            .addOnFailureListener { e ->
+                if (token == connectToken) {
+                    resetToIdle(notify = false)
+                    reportError("Подключение не удалось: ${e.message}")
+                }
+            }
     }
 
     fun selectMap(id: Int) {
@@ -319,15 +365,22 @@ class NearbyNet(context: Context) {
 
     // --------------------------------------------------------------- internals
 
-    private fun startAdvertising() {
+    private fun startAdvertising(attempt: Int = 0) {
+        if (roomState == RoomState.IN_GAME || roomState == RoomState.IDLE) return
         val options = AdvertisingOptions.Builder().setStrategy(Strategy.P2P_STAR).build()
         client?.startAdvertising(SERVICE_ID, nickname, connectionCallback, options)
             ?.addOnFailureListener { e ->
-                if (roomState == RoomState.HOSTING) {
-                    roomState = RoomState.IDLE
-                    humans.clear()
+                if (roomState == RoomState.IN_GAME || roomState == RoomState.IDLE) return@addOnFailureListener
+                if (attempt < 2) {
+                    client?.stopAdvertising()
+                    mainHandler.postDelayed({ startAdvertising(attempt + 1) }, 1_200L)
+                } else {
+                    if (roomState == RoomState.HOSTING) {
+                        roomState = RoomState.IDLE
+                        humans.clear()
+                    }
+                    reportError("Не удалось создать комнату: ${e.message}")
                 }
-                reportError("Не удалось создать комнату: ${e.message}")
             }
     }
 
@@ -344,6 +397,8 @@ class NearbyNet(context: Context) {
 
     private fun resetToIdle(notify: Boolean = true) {
         sessionGeneration++
+        connectToken++
+        cancelDiscoveryRetry()
         isHost = false
         hostEndpoint = null
         hostRound?.stop()
@@ -422,6 +477,7 @@ class NearbyNet(context: Context) {
 
         override fun onConnectionResult(endpointId: String, result: ConnectionResolution) {
             val c = client ?: return
+            connectToken++
             if (!result.status.isSuccess) {
                 if (!isHost) {
                     resetToIdle(notify = false)
@@ -472,6 +528,7 @@ class NearbyNet(context: Context) {
     private val discoveryCallback = object : EndpointDiscoveryCallback() {
         override fun onEndpointFound(endpointId: String, info: DiscoveredEndpointInfo) {
             discovered[endpointId] = info.endpointName.trim().ifBlank { "Комната" }
+            cancelDiscoveryRetry()
             notifyLobby()
         }
 
