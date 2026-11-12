@@ -29,13 +29,16 @@ class BotController(private val slot: Int, private val rng: Rng) {
 
         val cx = GameConfig.WORLD_SIZE / 2f
         val cy = cx
-        // Bots respect the same fog as humans: they only notice enemies in front of them.
+        // Bots respect the same fog as humans: they only notice enemies they can see,
+        // plus anything hugging them (engine noise).
         val enemy = world.nearestEnemy(me, 700f)?.takeIf { candidate ->
             val dx = candidate.x - me.x
             val dy = candidate.y - me.y
             val dist = hypot(dx, dy)
-            if (dist < 110f) true
-            else dist < 360f && Math.abs(angleDelta(me.turretDir, atan2(dy, dx))) < 1.1f
+            if (dist < 110f) return@takeIf true
+            if (dist >= 360f) return@takeIf false
+            if (Math.abs(angleDelta(me.turretDir, atan2(dy, dx))) >= 1.1f) return@takeIf false
+            world.hasLineOfSight(me.x, me.y, candidate.x, candidate.y)
         }
         val outside = hypot(me.x - cx, me.y - cy) > world.zoneRadius - 90f
         retargetIn -= dt
@@ -95,6 +98,7 @@ class BotController(private val slot: Int, private val rng: Rng) {
         var fire = false
         var aimX = 0f
         var aimY = 0f
+        var dropMine = false
         if (enemy != null) {
             val dx = enemy.x - me.x
             val dy = enemy.y - me.y
@@ -103,6 +107,8 @@ class BotController(private val slot: Int, private val rng: Rng) {
                 aimX = dx / dist
                 aimY = dy / dist
             }
+            // Leave a present behind when somebody is breathing down the hull.
+            if (dist < 120f && me.mines > 0 && me.dropCooldown <= 0f) dropMine = true
             val desired = atan2(dy, dx)
             val facingDiff = Math.abs(angleDelta(me.turretDir, desired))
             if (dist < 470f &&
@@ -112,6 +118,6 @@ class BotController(private val slot: Int, private val rng: Rng) {
                 fire = true
             }
         }
-        return TankInput(mx, my, aimX, aimY, fire, lights = true, dropMine = false)
+        return TankInput(mx, my, aimX, aimY, fire, lights = true, dropMine = dropMine)
     }
 }

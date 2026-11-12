@@ -541,16 +541,6 @@ class GameWorld(
         return best
     }
 
-    fun hasLineOfSight(ax: Float, ay: Float, bx: Float, by: Float): Boolean {
-        val dx = bx - ax
-        val dy = by - ay
-        val dist = hypot(dx, dy)
-        if (dist < 1f) return true
-        val steps = (dist / 10f).toInt() + 1
-        for (i in 1 until steps) {
-            val t = i.toFloat() / steps
-            if (map.blocksLightAtWorld(ax + dx * t, ay + dy * t)) return false
-        }
-        return true
-    }
+    fun hasLineOfSight(ax: Float, ay: Float, bx: Float, by: Float): Boolean =
+        !map.blocksLightAlong(ax, ay, bx, by)
 }

@@ -1,6 +1,11 @@
 package com.fogofwar.game.core
 
+import kotlin.math.abs
 import kotlin.math.floor
+import kotlin.math.hypot
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.sign
 
 enum class Tile {
     EMPTY,
@@ -60,6 +65,68 @@ class TileMap(
 
     fun blocksLightAtWorld(x: Float, y: Float): Boolean =
         blocksLight(floor(x / GameConfig.TILE).toInt(), floor(y / GameConfig.TILE).toInt())
+
+    /**
+     * Distance from ([ax], [ay]) to the first light-blocking tile in direction
+     * ([dirX], [dirY]), or [maxDistance] when the ray is clear.
+     *
+     * Grid traversal (Amanatides–Woo) visits only the tiles the ray crosses, so a thin
+     * wall cannot be skipped between samples. The direction does not need to be normalized.
+     */
+    fun raycastLight(ax: Float, ay: Float, dirX: Float, dirY: Float, maxDistance: Float): Float {
+        if (maxDistance <= 0f) return 0f
+        val length = hypot(dirX, dirY)
+        if (length < 1e-6f) return maxDistance
+        val dx = dirX / length
+        val dy = dirY / length
+
+        var tx = floor(ax / GameConfig.TILE).toInt()
+        var ty = floor(ay / GameConfig.TILE).toInt()
+        if (blocksLight(tx, ty)) return 0f
+
+        val stepX = sign(dx).toInt()
+        val stepY = sign(dy).toInt()
+        val deltaX = if (stepX == 0) Float.POSITIVE_INFINITY else GameConfig.TILE / abs(dx)
+        val deltaY = if (stepY == 0) Float.POSITIVE_INFINITY else GameConfig.TILE / abs(dy)
+        var maxX = if (stepX == 0) {
+            Float.POSITIVE_INFINITY
+        } else {
+            val boundary = (if (stepX > 0) tx + 1 else tx) * GameConfig.TILE
+            max(0f, (boundary - ax) / dx)
+        }
+        var maxY = if (stepY == 0) {
+            Float.POSITIVE_INFINITY
+        } else {
+            val boundary = (if (stepY > 0) ty + 1 else ty) * GameConfig.TILE
+            max(0f, (boundary - ay) / dy)
+        }
+
+        var distance = 0f
+        var guard = (maxDistance / GameConfig.TILE).toInt() + width + height + 8
+        while (distance < maxDistance && guard-- > 0) {
+            if (maxX < maxY) {
+                distance = maxX
+                tx += stepX
+                maxX += deltaX
+            } else {
+                distance = maxY
+                ty += stepY
+                maxY += deltaY
+            }
+            if (distance > maxDistance) return maxDistance
+            if (blocksLight(tx, ty)) return distance
+        }
+        return maxDistance
+    }
+
+    /** True when a light ray from A to B is stopped by a wall before reaching B. */
+    fun blocksLightAlong(ax: Float, ay: Float, bx: Float, by: Float): Boolean {
+        val dx = bx - ax
+        val dy = by - ay
+        val distance = hypot(dx, dy)
+        if (distance < 1f) return false
+        return raycastLight(ax, ay, dx, dy, distance) < distance
+    }
 
     fun blocksBullet(tx: Int, ty: Int): Boolean = when (tileAt(tx, ty)) {
         Tile.BRICK, Tile.CRACKED, Tile.STEEL -> true
