@@ -73,13 +73,15 @@ class ClientRound(
             )
         }
 
+        val bullets = interpolateBullets(a.snapshot.bullets, b.snapshot.bullets, alpha)
+
         return GameFrame(
             map = map,
             mapId = mapId,
             mySlot = mySlot,
             players = players,
             tanks = tanks,
-            bullets = b.snapshot.bullets,
+            bullets = bullets,
             pickups = b.snapshot.pickups,
             mines = b.snapshot.mines,
             zoneRadius = b.snapshot.zoneRadius,
@@ -92,4 +94,22 @@ class ClientRound(
     }
 
     private fun lerp(from: Float, to: Float, t: Float): Float = from + (to - from) * t
+
+    /** Bullets have no ids, so interpolate by index only when the lists still line up. */
+    private fun interpolateBullets(
+        from: List<BulletSnap>,
+        to: List<BulletSnap>,
+        alpha: Float,
+    ): List<BulletSnap> {
+        if (from.size != to.size) return to
+        if (alpha >= 1f || alpha <= 0f) return to
+        return to.mapIndexed { index, bullet ->
+            val previous = from[index]
+            if (kotlin.math.hypot(previous.x - bullet.x, previous.y - bullet.y) > 90f) {
+                bullet
+            } else {
+                BulletSnap(lerp(previous.x, bullet.x, alpha), lerp(previous.y, bullet.y, alpha))
+            }
+        }
+    }
 }
