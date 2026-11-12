@@ -197,11 +197,17 @@ class GameView @JvmOverloads constructor(
 
                 for (event in net.pollEffects()) {
                     effects.onEvent(event)
-                    if (event.kind == EffectKind.EXPLOSION) {
-                        val me = lastFrame?.me
-                        if (me != null) {
-                            val dist = hypot(me.x - event.x, me.y - event.y)
-                            if (dist < 520f) addShake((1f - dist / 520f) * 16f, 380L)
+                    val me = lastFrame?.me
+                    if (me != null) {
+                        val dist = hypot(me.x - event.x, me.y - event.y)
+                        when (event.kind) {
+                            EffectKind.EXPLOSION -> if (dist < 520f) {
+                                addShake((1f - dist / 520f) * 16f, 380L)
+                            }
+                            EffectKind.SHOT -> if (dist < 300f) {
+                                addShake((1f - dist / 300f) * 4f * density, 130L)
+                            }
+                            else -> Unit
                         }
                     }
                 }
