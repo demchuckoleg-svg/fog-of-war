@@ -5,6 +5,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.hypot
 
 class GameWorldTest {
 
@@ -77,12 +78,14 @@ class GameWorldTest {
         // Central arena is guaranteed to be empty.
         shooter.x = 1000f
         shooter.y = 1024f
-        shooter.dir = 0f
+        shooter.bodyDir = 0f
+        shooter.turretDir = 0f
         target.x = 1080f
         target.y = 1024f
-        target.dir = 0f
+        target.bodyDir = 0f
+        target.turretDir = 0f
 
-        world.setInput(0, TankInput(0f, 0f, true))
+        world.setInput(0, TankInput(fire = true))
         repeat(12) { world.step(GameConfig.TICK_DT) }
         assertEquals(GameConfig.MAX_HP - 1, target.hp)
     }
@@ -142,5 +145,54 @@ class GameWorldTest {
             assertTrue(world.zoneRadius >= GameConfig.ZONE_MIN_RADIUS)
         }
         assertFalse(world.bullets.any { it.travelled > GameConfig.BULLET_MAX_RANGE + 50f })
+    }
+
+    @Test
+    fun turretRotatesIndependentlyOfHull() {
+        val world = GameWorld(MapGenerator.generate(0, 21L), 0, 21L)
+        val tank = world.addPlayer(0, "gunner")
+        tank.x = 1024f
+        tank.y = 1024f
+        tank.bodyDir = 0f
+        tank.turretDir = 0f
+        world.addPlayer(1, "other")
+        // Drive right while aiming straight up.
+        world.setInput(0, TankInput(moveX = 1f, moveY = 0f, aimX = 0f, aimY = -1f))
+        repeat(20) { world.step(GameConfig.TICK_DT) }
+        assertEquals(0f, tank.bodyDir, 0.2f)
+        assertEquals(-Math.PI.toFloat() / 2f, tank.turretDir, 0.25f)
+    }
+
+    @Test
+    fun repairPickupHealsAndEmitsEvent() {
+        val world = GameWorld(MapGenerator.generate(1, 22L), 1, 22L)
+        val tank = world.addPlayer(0, "medic")
+        world.addPlayer(1, "other")
+        world.step(GameConfig.TICK_DT) // initial crates are spawned on the first tick
+        tank.hp = 2
+        world.pickups.add(Pickup(tank.x, tank.y, GameConfig.PICKUP_REPAIR))
+        world.step(GameConfig.TICK_DT)
+        assertEquals(GameConfig.MAX_HP, tank.hp)
+        assertTrue(world.pickups.none { hypot(it.x - tank.x, it.y - tank.y) < 1f })
+        assertTrue(world.drainEffects().any { it.kind == EffectKind.PICKUP })
+    }
+
+    @Test
+    fun mineExplodesOnEnemyAndDamagesIt() {
+        val world = GameWorld(MapGenerator.generate(2, 23L), 2, 23L)
+        val owner = world.addPlayer(0, "miner")
+        val enemy = world.addPlayer(1, "victim")
+        owner.x = 1000f
+        owner.y = 1024f
+        enemy.x = 1060f
+        enemy.y = 1024f
+        val mine = Mine(1040f, 1024f, 0)
+        mine.armTime = GameConfig.MINE_ARM_TIME
+        mine.armed = true
+        world.mines.add(mine)
+        world.step(GameConfig.TICK_DT)
+        assertEquals(GameConfig.MAX_HP - 1, enemy.hp)
+        assertTrue(world.mines.isEmpty())
+        assertTrue(world.drainEffects().any { it.kind == EffectKind.EXPLOSION })
     }
 }

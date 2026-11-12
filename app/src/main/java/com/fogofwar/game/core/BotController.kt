@@ -35,7 +35,7 @@ class BotController(private val slot: Int, private val rng: Rng) {
             val dy = candidate.y - me.y
             val dist = hypot(dx, dy)
             if (dist < 110f) true
-            else dist < 360f && Math.abs(angleDelta(me.dir, atan2(dy, dx))) < 1.1f
+            else dist < 360f && Math.abs(angleDelta(me.bodyDir, atan2(dy, dx))) < 1.1f
         }
         val outside = hypot(me.x - cx, me.y - cy) > world.zoneRadius - 90f
         retargetIn -= dt
@@ -93,14 +93,25 @@ class BotController(private val slot: Int, private val rng: Rng) {
         }
 
         var fire = false
-        if (enemy != null && len > 0f) {
-            val dist = hypot(enemy.x - me.x, enemy.y - me.y)
-            val aim = atan2(my, mx)
-            val facingDiff = Math.abs(angleDelta(me.dir, aim))
-            if (dist < 430f && facingDiff < 0.32f && world.hasLineOfSight(me.x, me.y, enemy.x + 0.01f, enemy.y)) {
+        var aimX = 0f
+        var aimY = 0f
+        if (enemy != null) {
+            val dx = enemy.x - me.x
+            val dy = enemy.y - me.y
+            val dist = hypot(dx, dy)
+            if (dist > 0.01f) {
+                aimX = dx / dist
+                aimY = dy / dist
+            }
+            val desired = atan2(dy, dx)
+            val facingDiff = Math.abs(angleDelta(me.turretDir, desired))
+            if (dist < 470f &&
+                facingDiff < 0.30f &&
+                world.hasLineOfSight(me.x, me.y, enemy.x + 0.01f, enemy.y)
+            ) {
                 fire = true
             }
         }
-        return TankInput(mx, my, fire)
+        return TankInput(mx, my, aimX, aimY, fire, lights = true, dropMine = false)
     }
 }

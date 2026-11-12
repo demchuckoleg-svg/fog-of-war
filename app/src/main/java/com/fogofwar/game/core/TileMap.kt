@@ -83,6 +83,19 @@ class TileMap(
         }
     }
 
+    /** A powered bullet / explosion removes a brick in one hit. */
+    fun hitHard(tx: Int, ty: Int): TileChange? {
+        if (!inBounds(tx, ty)) return null
+        return when (tileAt(tx, ty)) {
+            Tile.BRICK, Tile.CRACKED -> {
+                val idx = index(tx, ty)
+                tiles[idx] = Tile.EMPTY.ordinal.toByte()
+                TileChange(idx, Tile.EMPTY)
+            }
+            else -> null
+        }
+    }
+
     fun applyChange(change: TileChange) {
         if (change.index in tiles.indices) tiles[change.index] = change.tile.ordinal.toByte()
     }

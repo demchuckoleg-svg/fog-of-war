@@ -1,5 +1,7 @@
 package com.fogofwar.game.net
 
+import com.fogofwar.game.core.EffectEvent
+import com.fogofwar.game.core.EffectKind
 import com.fogofwar.game.core.Tile
 import com.fogofwar.game.core.TileChange
 import java.nio.ByteBuffer
@@ -34,16 +36,25 @@ sealed class NetMessage {
     data class Welcome(val slot: Int) : NetMessage()
     data class Roster(val roomState: RoomState, val mapId: Int, val players: List<PlayerInfo>) : NetMessage()
     data class StartRound(val mapId: Int, val seed: Long, val players: List<PlayerInfo>) : NetMessage()
-    data class InputMsg(val seq: Int, val moveX: Float, val moveY: Float, val fire: Boolean) : NetMessage()
+    data class InputMsg(
+        val seq: Int,
+        val moveX: Float,
+        val moveY: Float,
+        val aimX: Float,
+        val aimY: Float,
+        val fire: Boolean,
+        val lights: Boolean,
+        val dropMine: Boolean,
+    ) : NetMessage()
     data class SnapshotMsg(val snapshot: Snapshot) : NetMessage()
     data class RoundOver(val winnerSlot: Int, val winnerName: String, val players: List<PlayerInfo>) : NetMessage()
     data class MapSelect(val mapId: Int) : NetMessage()
     data class RoomClosed(val reason: String) : NetMessage()
 }
 
-/** Binary wire protocol, kept deliberately tiny and versioned by a single service id. */
+/** Binary wire protocol. Bump VERSION + SERVICE_ID when the format changes. */
 object Protocol {
-    const val VERSION = 1
+    const val VERSION = 2
 
     private const val MSG_HELLO = 1
     private const val MSG_WELCOME = 2
@@ -54,6 +65,10 @@ object Protocol {
     private const val MSG_ROUND_OVER = 7
     private const val MSG_MAP_SELECT = 8
     private const val MSG_ROOM_CLOSED = 9
+
+    private const val INPUT_FIRE = 1
+    private const val INPUT_LIGHTS = 2
+    private const val INPUT_DROP = 4
 
     // ---------------------------------------------------------------- encoding
 
@@ -89,42 +104,93 @@ object Protocol {
         return finish(b)
     }
 
-    fun input(seq: Int, moveX: Float, moveY: Float, fire: Boolean): ByteArray {
+    fun input(
+        seq: Int,
+        moveX: Float,
+        moveY: Float,
+        aimX: Float,
+        aimY: Float,
+        fire: Boolean,
+        lights: Boolean,
+        dropMine: Boolean,
+    ): ByteArray {
         val b = ByteBuffer.allocate(16)
         b.put(MSG_INPUT.toByte())
         b.putInt(seq)
         b.put((moveX.coerceIn(-1f, 1f) * 127f).toInt().toByte())
         b.put((moveY.coerceIn(-1f, 1f) * 127f).toInt().toByte())
-        b.put(if (fire) 1 else 0)
+        b.put((aimX.coerceIn(-1f, 1f) * 127f).toInt().toByte())
+        b.put((aimY.coerceIn(-1f, 1f) * 127f).toInt().toByte())
+        var flags = 0
+        if (fire) flags = flags or INPUT_FIRE
+        if (lights) flags = flags or INPUT_LIGHTS
+        if (dropMine) flags = flags or INPUT_DROP
+        b.put(flags.toByte())
         return finish(b)
     }
 
     fun snapshot(snapshot: Snapshot): ByteArray {
-        val size = 128 + snapshot.tanks.size * 20 + snapshot.bullets.size * 12 + snapshot.tileChanges.size * 8
+        val size = 160 +
+            snapshot.tanks.size * 32 +
+            snapshot.bullets.size * 10 +
+            snapshot.pickups.size * 12 +
+            snapshot.mines.size * 12 +
+            snapshot.tileChanges.size * 4 +
+            snapshot.events.size * 16
         val b = ByteBuffer.allocate(size)
         b.put(MSG_SNAPSHOT.toByte())
         b.putInt(snapshot.tick.toInt())
+
         b.put(snapshot.tanks.size.toByte())
         for (t in snapshot.tanks) {
             b.put(t.slot.toByte())
             b.putFloat(t.x)
             b.putFloat(t.y)
-            b.putFloat(t.dir)
+            b.putFloat(t.bodyDir)
+            b.putFloat(t.turretDir)
             b.put(t.hp.toByte())
-            b.put(if (t.alive) 1 else 0)
+            b.put(t.flags.toByte())
+            b.put(t.mines.toByte())
+            b.put((t.cooldown.coerceIn(0f, 1f) * 255f).toInt().toByte())
         }
+
         b.put(snapshot.bullets.size.toByte())
         for (bullet in snapshot.bullets) {
             b.putFloat(bullet.x)
             b.putFloat(bullet.y)
         }
+
+        b.put(snapshot.pickups.size.toByte())
+        for (pickup in snapshot.pickups) {
+            b.put(pickup.type.toByte())
+            b.putFloat(pickup.x)
+            b.putFloat(pickup.y)
+        }
+
+        b.put(snapshot.mines.size.toByte())
+        for (mine in snapshot.mines) {
+            b.putFloat(mine.x)
+            b.putFloat(mine.y)
+            b.put(if (mine.armed) 1 else 0)
+            b.put(mine.owner.toByte())
+        }
+
         b.putFloat(snapshot.zoneRadius)
         b.putFloat(snapshot.sonarRadius)
         b.put(if (snapshot.sonarActive) 1 else 0)
+
         b.put(snapshot.tileChanges.size.toByte())
         for (change in snapshot.tileChanges) {
             b.putShort(change.index.toShort())
             b.put(change.tile.ordinal.toByte())
+        }
+
+        b.put(snapshot.events.size.toByte())
+        for (event in snapshot.events) {
+            b.put(event.kind.ordinal.toByte())
+            b.putFloat(event.x)
+            b.putFloat(event.y)
+            b.putFloat(event.radius)
         }
         return finish(b)
     }
@@ -170,12 +236,24 @@ object Protocol {
                     val seed = b.long
                     NetMessage.StartRound(mapId, seed, readPlayers(b))
                 }
-                MSG_INPUT -> NetMessage.InputMsg(
-                    b.int,
-                    b.get() / 127f,
-                    b.get() / 127f,
-                    b.get().toInt() != 0,
-                )
+                MSG_INPUT -> {
+                    val seq = b.int
+                    val moveX = b.get() / 127f
+                    val moveY = b.get() / 127f
+                    val aimX = b.get() / 127f
+                    val aimY = b.get() / 127f
+                    val flags = b.get().toInt() and 0xFF
+                    NetMessage.InputMsg(
+                        seq = seq,
+                        moveX = moveX,
+                        moveY = moveY,
+                        aimX = aimX,
+                        aimY = aimY,
+                        fire = flags and INPUT_FIRE != 0,
+                        lights = flags and INPUT_LIGHTS != 0,
+                        dropMine = flags and INPUT_DROP != 0,
+                    )
+                }
                 MSG_SNAPSHOT -> NetMessage.SnapshotMsg(readSnapshot(b))
                 MSG_ROUND_OVER -> NetMessage.RoundOver(
                     b.get().toInt(),
@@ -193,6 +271,7 @@ object Protocol {
 
     private fun readSnapshot(b: ByteBuffer): Snapshot {
         val tick = b.int.toLong()
+
         val tankCount = b.get().toInt() and 0xFF
         val tanks = ArrayList<TankSnap>(tankCount)
         repeat(tankCount) {
@@ -201,20 +280,38 @@ object Protocol {
                     slot = b.get().toInt(),
                     x = b.float,
                     y = b.float,
-                    dir = b.float,
+                    bodyDir = b.float,
+                    turretDir = b.float,
                     hp = b.get().toInt(),
-                    alive = b.get().toInt() != 0,
+                    flags = b.get().toInt() and 0xFF,
+                    mines = b.get().toInt() and 0xFF,
+                    cooldown = (b.get().toInt() and 0xFF) / 255f,
                 )
             )
         }
+
         val bulletCount = b.get().toInt() and 0xFF
         val bullets = ArrayList<BulletSnap>(bulletCount)
         repeat(bulletCount) {
             bullets.add(BulletSnap(b.float, b.float))
         }
+
+        val pickupCount = b.get().toInt() and 0xFF
+        val pickups = ArrayList<PickupSnap>(pickupCount)
+        repeat(pickupCount) {
+            pickups.add(PickupSnap(b.get().toInt() and 0xFF, b.float, b.float))
+        }
+
+        val mineCount = b.get().toInt() and 0xFF
+        val mines = ArrayList<MineSnap>(mineCount)
+        repeat(mineCount) {
+            mines.add(MineSnap(b.float, b.float, b.get().toInt() != 0, b.get().toInt() and 0xFF))
+        }
+
         val zoneRadius = b.float
         val sonarRadius = b.float
         val sonarActive = b.get().toInt() != 0
+
         val changeCount = b.get().toInt() and 0xFF
         val changes = ArrayList<TileChange>(changeCount)
         repeat(changeCount) {
@@ -222,7 +319,29 @@ object Protocol {
             val tile = Tile.fromOrdinal(b.get().toInt() and 0xFF)
             changes.add(TileChange(index, tile))
         }
-        return Snapshot(tick, tanks, bullets, zoneRadius, sonarRadius, sonarActive, changes)
+
+        val eventCount = b.get().toInt() and 0xFF
+        val events = ArrayList<EffectEvent>(eventCount)
+        repeat(eventCount) {
+            val kind = EffectKind.values().getOrElse(b.get().toInt() and 0xFF) { EffectKind.SHOT }
+            val x = b.float
+            val y = b.float
+            val radius = b.float
+            events.add(EffectEvent(kind, x, y, radius))
+        }
+
+        return Snapshot(
+            tick = tick,
+            tanks = tanks,
+            bullets = bullets,
+            pickups = pickups,
+            mines = mines,
+            zoneRadius = zoneRadius,
+            sonarRadius = sonarRadius,
+            sonarActive = sonarActive,
+            tileChanges = changes,
+            events = events,
+        )
     }
 
     private fun readRoomState(ordinal: Int): RoomState =

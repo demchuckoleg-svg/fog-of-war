@@ -1,5 +1,6 @@
 package com.fogofwar.game.net
 
+import com.fogofwar.game.core.EffectEvent
 import com.fogofwar.game.core.GameConfig
 import com.fogofwar.game.core.GameWorld
 import com.fogofwar.game.core.MapGenerator
@@ -34,6 +35,7 @@ class HostRound(
 
     private var tick = 0L
     private var overTicks = -1L
+    private val snapshotEvents = ArrayList<EffectEvent>()
 
     init {
         for (player in players) {
@@ -69,6 +71,12 @@ class HostRound(
                 break
             }
 
+            val effects = world.drainEffects()
+            if (effects.isNotEmpty()) {
+                net.pushEffects(effects)
+                snapshotEvents.addAll(effects)
+            }
+
             frame = buildFrame()
 
             // 30 ticks/s simulation, ~15 snapshots/s: plenty for smooth interpolation.
@@ -76,13 +84,29 @@ class HostRound(
                 val changes = world.drainTileChanges()
                 val snapshot = Snapshot(
                     tick = tick,
-                    tanks = world.tanks.map { TankSnap(it.slot, it.x, it.y, it.dir, it.hp, it.alive) },
+                    tanks = world.tanks.map {
+                        TankSnap(
+                            slot = it.slot,
+                            x = it.x,
+                            y = it.y,
+                            bodyDir = it.bodyDir,
+                            turretDir = it.turretDir,
+                            hp = it.hp,
+                            flags = it.flagBits(),
+                            mines = it.mines,
+                            cooldown = it.cooldownFraction(),
+                        )
+                    },
                     bullets = world.bullets.map { BulletSnap(it.x, it.y) },
+                    pickups = world.pickups.map { PickupSnap(it.type, it.x, it.y) },
+                    mines = world.mines.map { MineSnap(it.x, it.y, it.armed, it.owner) },
                     zoneRadius = world.zoneRadius,
                     sonarRadius = world.sonarRadius,
                     sonarActive = world.sonarActive,
                     tileChanges = changes,
+                    events = ArrayList(snapshotEvents),
                 )
+                snapshotEvents.clear()
                 net.broadcastRaw(Protocol.snapshot(snapshot))
             }
 
@@ -112,10 +136,18 @@ class HostRound(
                 name = tank.name,
                 x = tank.x,
                 y = tank.y,
-                dir = tank.dir,
+                bodyDir = tank.bodyDir,
+                turretDir = tank.turretDir,
                 hp = tank.hp,
                 alive = tank.alive,
                 isBot = tank.isBot,
+                lightsOn = tank.lightsOn,
+                moving = tank.moving,
+                invulnerable = tank.invuln > 0f,
+                powered = tank.powerTime > 0f,
+                lightBoost = tank.lightTime > 0f,
+                mines = tank.mines,
+                cooldown = tank.cooldownFraction(),
             )
         }
         return GameFrame(
@@ -125,6 +157,8 @@ class HostRound(
             players = players,
             tanks = tanks,
             bullets = world.bullets.map { BulletSnap(it.x, it.y) },
+            pickups = world.pickups.map { PickupSnap(it.type, it.x, it.y) },
+            mines = world.mines.map { MineSnap(it.x, it.y, it.armed, it.owner) },
             zoneRadius = world.zoneRadius,
             sonarRadius = world.sonarRadius,
             sonarActive = world.sonarActive,

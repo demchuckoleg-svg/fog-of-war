@@ -58,10 +58,18 @@ class ClientRound(
                 name = info?.name ?: "?",
                 x = if (ta != null) lerp(ta.x, tb.x, alpha) else tb.x,
                 y = if (ta != null) lerp(ta.y, tb.y, alpha) else tb.y,
-                dir = if (ta != null) lerpAngle(ta.dir, tb.dir, alpha) else tb.dir,
+                bodyDir = if (ta != null) lerpAngle(ta.bodyDir, tb.bodyDir, alpha) else tb.bodyDir,
+                turretDir = if (ta != null) lerpAngle(ta.turretDir, tb.turretDir, alpha) else tb.turretDir,
                 hp = tb.hp,
                 alive = tb.alive,
                 isBot = info?.isBot ?: false,
+                lightsOn = tb.lightsOn,
+                moving = tb.moving,
+                invulnerable = tb.invulnerable,
+                powered = tb.powered,
+                lightBoost = tb.lightBoost,
+                mines = tb.mines,
+                cooldown = tb.cooldown,
             )
         }
 
@@ -72,6 +80,8 @@ class ClientRound(
             players = players,
             tanks = tanks,
             bullets = b.snapshot.bullets,
+            pickups = b.snapshot.pickups,
+            mines = b.snapshot.mines,
             zoneRadius = b.snapshot.zoneRadius,
             sonarRadius = b.snapshot.sonarRadius,
             sonarActive = b.snapshot.sonarActive,

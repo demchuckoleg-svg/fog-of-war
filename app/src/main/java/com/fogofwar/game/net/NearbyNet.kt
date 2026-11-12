@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.fogofwar.game.core.EffectEvent
 import com.fogofwar.game.core.GameConfig
 import com.fogofwar.game.core.MapGenerator
 import com.fogofwar.game.core.TankInput
@@ -38,7 +39,7 @@ class NearbyNet(context: Context) {
 
     companion object {
         private const val TAG = "NearbyNet"
-        const val SERVICE_ID = "com.fogofwar.game.nearby.v1"
+        const val SERVICE_ID = "com.fogofwar.game.nearby.v2"
     }
 
     private val client: ConnectionsClient? = try {
@@ -82,6 +83,7 @@ class NearbyNet(context: Context) {
     private var status: String? = null
     private var inputSeq = 0
     private var sessionGeneration = 0
+    private val effectQueue = java.util.concurrent.ConcurrentLinkedQueue<EffectEvent>()
 
     // ------------------------------------------------------------- public API
 
@@ -180,16 +182,53 @@ class NearbyNet(context: Context) {
         notifyLobby()
     }
 
-    /** Held input from the local joystick; called from the render thread. */
-    fun sendInput(moveX: Float, moveY: Float, fire: Boolean) {
+    /** Held input from the local twin-stick; called from the render thread. */
+    fun sendInput(
+        moveX: Float,
+        moveY: Float,
+        aimX: Float,
+        aimY: Float,
+        fire: Boolean,
+        lights: Boolean,
+        dropMine: Boolean,
+    ) {
         if (roomState != RoomState.IN_GAME) return
         if (isHost) {
-            hostRound?.world?.setInput(0, TankInput(moveX, moveY, fire))
+            hostRound?.world?.setInput(
+                0,
+                TankInput(
+                    moveX = moveX,
+                    moveY = moveY,
+                    aimX = aimX,
+                    aimY = aimY,
+                    fire = fire,
+                    lights = lights,
+                    dropMine = dropMine,
+                ),
+            )
         } else {
             val host = hostEndpoint ?: return
             inputSeq++
-            sendRaw(host, Protocol.input(inputSeq, moveX, moveY, fire))
+            sendRaw(
+                host,
+                Protocol.input(inputSeq, moveX, moveY, aimX, aimY, fire, lights, dropMine),
+            )
         }
+    }
+
+    /** Effects produced on the server/network since the last call, for the local renderer. */
+    fun pollEffects(): List<EffectEvent> {
+        if (effectQueue.isEmpty()) return emptyList()
+        val out = ArrayList<EffectEvent>(8)
+        while (out.size < 64) {
+            val event = effectQueue.poll() ?: break
+            out.add(event)
+        }
+        return out
+    }
+
+    internal fun pushEffects(events: List<EffectEvent>) {
+        for (event in events) effectQueue.add(event)
     }
 
     fun currentFrame(): GameFrame? {
@@ -299,6 +338,7 @@ class NearbyNet(context: Context) {
         mySlot = 0
         lastWinner = null
         status = null
+        effectQueue.clear()
         if (notify) notifyLobby()
     }
 
@@ -431,7 +471,15 @@ class NearbyNet(context: Context) {
                     if (roomState == RoomState.IN_GAME) {
                         hostRound?.world?.setInput(
                             slot,
-                            TankInput(message.moveX, message.moveY, message.fire),
+                            TankInput(
+                                moveX = message.moveX,
+                                moveY = message.moveY,
+                                aimX = message.aimX,
+                                aimY = message.aimY,
+                                fire = message.fire,
+                                lights = message.lights,
+                                dropMine = message.dropMine,
+                            ),
                         )
                     }
                 }
@@ -459,7 +507,10 @@ class NearbyNet(context: Context) {
                     notifyLobby()
                 }
                 is NetMessage.StartRound -> startClientRound(message)
-                is NetMessage.SnapshotMsg -> clientRound?.onSnapshot(message.snapshot)
+                is NetMessage.SnapshotMsg -> {
+                    if (message.snapshot.events.isNotEmpty()) pushEffects(message.snapshot.events)
+                    clientRound?.onSnapshot(message.snapshot)
+                }
                 is NetMessage.RoundOver -> {
                     lastWinner = message.winnerName.ifBlank { null }
                     clientRound?.setRoundOver(lastWinner)
