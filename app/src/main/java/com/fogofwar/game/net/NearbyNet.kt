@@ -22,6 +22,7 @@ import com.google.android.gms.nearby.connection.Payload
 import com.google.android.gms.nearby.connection.PayloadCallback
 import com.google.android.gms.nearby.connection.PayloadTransferUpdate
 import com.google.android.gms.nearby.connection.Strategy
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Application-wide Nearby Connections session. It owns the persistent lobby:
@@ -70,6 +71,10 @@ class NearbyNet(context: Context) {
     @Volatile
     var isHost: Boolean = false
         private set
+
+    /** Diagnostics for the perf overlay; bytes counted per send/receive call. */
+    val bytesSent = AtomicLong()
+    val bytesReceived = AtomicLong()
     @Volatile
     var roomState: RoomState = RoomState.IDLE
         private set
@@ -286,7 +291,7 @@ class NearbyNet(context: Context) {
         aimY: Float,
         fire: Boolean,
         lights: Boolean,
-        dropMine: Boolean,
+        throwGrenade: Boolean,
     ) {
         if (roomState != RoomState.IN_GAME) return
         if (isHost) {
@@ -299,7 +304,7 @@ class NearbyNet(context: Context) {
                     aimY = aimY,
                     fire = fire,
                     lights = lights,
-                    dropMine = dropMine,
+                    throwGrenade = throwGrenade,
                 ),
             )
         } else {
@@ -307,7 +312,7 @@ class NearbyNet(context: Context) {
             inputSeq++
             sendRaw(
                 host,
-                Protocol.input(inputSeq, moveX, moveY, aimX, aimY, fire, lights, dropMine),
+                Protocol.input(inputSeq, moveX, moveY, aimX, aimY, fire, lights, throwGrenade),
             )
         }
     }
@@ -521,6 +526,7 @@ class NearbyNet(context: Context) {
     }
 
     private fun sendRaw(endpointId: String, bytes: ByteArray) {
+        bytesSent.addAndGet(bytes.size.toLong())
         client?.sendPayload(endpointId, Payload.fromBytes(bytes))
     }
 
@@ -595,6 +601,7 @@ class NearbyNet(context: Context) {
     private val payloadCallback = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
             val bytes = payload.asBytes() ?: return
+            bytesReceived.addAndGet(bytes.size.toLong())
             handleMessage(endpointId, bytes)
         }
 
@@ -777,7 +784,7 @@ class NearbyNet(context: Context) {
                                 aimY = message.aimY,
                                 fire = message.fire,
                                 lights = message.lights,
-                                dropMine = message.dropMine,
+                                throwGrenade = message.throwGrenade,
                             ),
                         )
                     }

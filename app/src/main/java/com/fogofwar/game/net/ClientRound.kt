@@ -93,9 +93,9 @@ class ClientRound(
                 invulnerable = tb.invulnerable,
                 powered = tb.powered,
                 lightBoost = tb.lightBoost,
-                mines = tb.mines,
+                grenades = tb.grenades,
                 cooldown = tb.cooldown,
-                mineRecharge = tb.mineRecharge,
+                grenadeRecharge = tb.grenadeRecharge,
             )
         }
 
@@ -109,7 +109,7 @@ class ClientRound(
             tanks = tanks,
             bullets = bullets,
             pickups = b.snapshot.pickups,
-            mines = b.snapshot.mines,
+            grenades = b.snapshot.grenades,
             zoneRadius = b.snapshot.zoneRadius,
             sonarRadius = b.snapshot.sonarRadius,
             sonarActive = b.snapshot.sonarActive,

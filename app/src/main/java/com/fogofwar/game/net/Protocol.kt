@@ -72,7 +72,7 @@ sealed class NetMessage {
         val aimY: Float,
         val fire: Boolean,
         val lights: Boolean,
-        val dropMine: Boolean,
+        val throwGrenade: Boolean,
     ) : NetMessage()
     data class SnapshotMsg(val snapshot: Snapshot) : NetMessage()
     data class TileSync(val changes: List<TileChange>) : NetMessage()
@@ -98,7 +98,7 @@ object Protocol {
 
     private const val INPUT_FIRE = 1
     private const val INPUT_LIGHTS = 2
-    private const val INPUT_DROP = 4
+    private const val INPUT_GRENADE = 4
 
     /** Nicknames are capped well below this; the limit only protects the buffer. */
     private const val MAX_STRING_BYTES = 64
@@ -147,7 +147,7 @@ object Protocol {
         aimY: Float,
         fire: Boolean,
         lights: Boolean,
-        dropMine: Boolean,
+        throwGrenade: Boolean,
     ): ByteArray {
         val b = ByteBuffer.allocate(16)
         b.put(MSG_INPUT.toByte())
@@ -159,7 +159,7 @@ object Protocol {
         var flags = 0
         if (fire) flags = flags or INPUT_FIRE
         if (lights) flags = flags or INPUT_LIGHTS
-        if (dropMine) flags = flags or INPUT_DROP
+        if (throwGrenade) flags = flags or INPUT_GRENADE
         b.put(flags.toByte())
         return finish(b)
     }
@@ -169,7 +169,7 @@ object Protocol {
             snapshot.tanks.size * 22 +
             snapshot.bullets.size * 8 +
             snapshot.pickups.size * 9 +
-            snapshot.mines.size * 10 +
+            snapshot.grenades.size * 10 +
             snapshot.events.size * 13
         val b = ByteBuffer.allocate(size)
         b.put(MSG_SNAPSHOT.toByte())
@@ -184,9 +184,9 @@ object Protocol {
             b.putFloat(t.turretDir)
             b.put(t.hp.toByte())
             b.put(t.flags.toByte())
-            b.put(t.mines.toByte())
+            b.put(t.grenades.toByte())
             b.put((t.cooldown.coerceIn(0f, 1f) * 255f).toInt().toByte())
-            b.put((t.mineRecharge.coerceIn(0f, 1f) * 255f).toInt().toByte())
+            b.put((t.grenadeRecharge.coerceIn(0f, 1f) * 255f).toInt().toByte())
         }
 
         b.putShort(snapshot.bullets.size.toShort())
@@ -202,12 +202,12 @@ object Protocol {
             b.putFloat(pickup.y)
         }
 
-        b.putShort(snapshot.mines.size.toShort())
-        for (mine in snapshot.mines) {
-            b.putFloat(mine.x)
-            b.putFloat(mine.y)
-            b.put(if (mine.armed) 1 else 0)
-            b.put(mine.owner.toByte())
+        b.putShort(snapshot.grenades.size.toShort())
+        for (grenade in snapshot.grenades) {
+            b.putFloat(grenade.x)
+            b.putFloat(grenade.y)
+            b.put(if (grenade.landed) 1 else 0)
+            b.put(grenade.owner.toByte())
         }
 
         b.putFloat(snapshot.zoneRadius)
@@ -226,7 +226,7 @@ object Protocol {
 
     /**
      * Tile changes travel separately from snapshots: one bad snapshot can never lose a
-     * piece of the map, and a long mine chain can be split into several reliable messages.
+     * piece of the map, and a long grenade chain can be split into several reliable messages.
      */
     fun tileSync(changes: List<TileChange>): ByteArray {
         val b = ByteBuffer.allocate(3 + changes.size * 3)
@@ -301,7 +301,7 @@ object Protocol {
                         aimY = aimY,
                         fire = flags and INPUT_FIRE != 0,
                         lights = flags and INPUT_LIGHTS != 0,
-                        dropMine = flags and INPUT_DROP != 0,
+                        throwGrenade = flags and INPUT_GRENADE != 0,
                     )
                 }
                 MSG_SNAPSHOT -> NetMessage.SnapshotMsg(readSnapshot(b))
@@ -335,9 +335,9 @@ object Protocol {
                     turretDir = b.float,
                     hp = b.get().toInt(),
                     flags = b.get().toInt() and 0xFF,
-                    mines = b.get().toInt() and 0xFF,
+                    grenades = b.get().toInt() and 0xFF,
                     cooldown = (b.get().toInt() and 0xFF) / 255f,
-                    mineRecharge = (b.get().toInt() and 0xFF) / 255f,
+                    grenadeRecharge = (b.get().toInt() and 0xFF) / 255f,
                 )
             )
         }
@@ -354,10 +354,10 @@ object Protocol {
             pickups.add(PickupSnap(b.get().toInt() and 0xFF, b.float, b.float))
         }
 
-        val mineCount = b.short.toInt() and 0xFFFF
-        val mines = ArrayList<MineSnap>(mineCount)
-        repeat(mineCount) {
-            mines.add(MineSnap(b.float, b.float, b.get().toInt() != 0, b.get().toInt() and 0xFF))
+        val grenadeCount = b.short.toInt() and 0xFFFF
+        val grenades = ArrayList<GrenadeSnap>(grenadeCount)
+        repeat(grenadeCount) {
+            grenades.add(GrenadeSnap(b.float, b.float, b.get().toInt() != 0, b.get().toInt() and 0xFF))
         }
 
         val zoneRadius = b.float
@@ -379,7 +379,7 @@ object Protocol {
             tanks = tanks,
             bullets = bullets,
             pickups = pickups,
-            mines = mines,
+            grenades = grenades,
             zoneRadius = zoneRadius,
             sonarRadius = sonarRadius,
             sonarActive = sonarActive,

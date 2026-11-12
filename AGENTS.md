@@ -15,7 +15,7 @@ Multiplayer Android top-down tank game (1–6 players via Google Play Services N
 - `core/` — **Pure Kotlin game simulation (NO Android dependencies).**
   - Deterministic 64×64 map generation by `(mapId, GameConfig.MAP_SEED)` (4 maps, no consecutive repeats).
   - Tiles: `EMPTY`, `BRICK` (2 HP), `CRACKED`, `STEEL`, `WATER`.
-  - AABB physics, tank push-apart, bullets, shrinking zone, sonar (~4 s pulse), AI bots (4 in solo), mines (2 charges, 8 s recharge, 0.7 s arm, R=64 AoE), pickups (`REPAIR`, `POWER`, `LIGHT`), `EffectEvent` queue.
+  - AABB physics, tank push-apart, bullets, shrinking zone, sonar (~4 s pulse), AI bots (4 in solo), grenades (2 charges, 9 s recharge, thrown ~245 px, 1.15 s fuse, R=92 AoE), pickups (`REPAIR`, `POWER`, `LIGHT`), `EffectEvent` queue.
 - `net/` — **Networking & persistent session state.**
   - `NearbyNet`: `Application`-scoped singleton surviving `LOBBY` → `IN_GAME` → `ROUND_OVER` → `LOBBY`.
   - `RoomsActivity`: foreground-only discovery; host advertises `RoomDescriptor` (`nick|mapId|players|L/G|code`, **strictly ≤ 64 bytes UTF-8**) with ~1.5 s debounce.
@@ -26,7 +26,7 @@ Multiplayer Android top-down tank game (1–6 players via Google Play Services N
   - `SpriteAtlas.kt`: 16×16 ASCII grids → nearest-neighbour `Bitmap` with per-slot tank coloring.
   - `Effects.kt`: tracks, muzzle flash, sparks, smoke, explosions, sound rings, camera shake, barrel recoil.
   - `MapPreviewView`: lobby map preview using the same deterministic generator.
-- `render/GameView.kt` (Input) — Twin-stick controls: left stick = body movement (`moveX/Y`), right stick = Brawl Stars aim (tap = auto-aim nearest LoS enemy, drag & release = manual fire), plus `MINE` and `LIGHT` toggle buttons.
+- `render/GameView.kt` (Input) — Twin-stick controls: left stick = body movement (`moveX/Y`), right stick = Brawl Stars aim (tap = auto-aim nearest LoS enemy, drag & release = manual fire), plus `ГРАНАТА` and `LIGHT` toggle buttons.
 
 ## Hard Rules for Agents
 1. **Keep `core/` pure:** Never import `android.*` inside `core/`. All simulation logic must remain runnable via JVM unit tests.

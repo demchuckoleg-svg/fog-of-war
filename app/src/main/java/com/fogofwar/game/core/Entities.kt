@@ -15,7 +15,7 @@ data class TankInput(
     val aimY: Float = 0f,
     val fire: Boolean = false,
     val lights: Boolean = true,
-    val dropMine: Boolean = false,
+    val throwGrenade: Boolean = false,
 ) {
     /** Clamps both sticks to a unit circle (diagonal is not faster). */
     fun clamped(): TankInput {
@@ -33,7 +33,7 @@ data class TankInput(
             ax /= aimLen
             ay /= aimLen
         }
-        return TankInput(mx, my, ax, ay, fire, lights, dropMine)
+        return TankInput(mx, my, ax, ay, fire, lights, throwGrenade)
     }
 
     val hasAim: Boolean get() = hypot(aimX, aimY) > GameConfig.AIM_DEADZONE
@@ -61,10 +61,10 @@ data class TankInput(
     var powerTime: Float = 0f
     var lightTime: Float = 0f
 
-    var mines: Int = GameConfig.MINE_CHARGES
-    var dropCooldown: Float = 0f
-    /** Seconds accumulated toward the next mine charge while below max. */
-    var mineRecharge: Float = 0f
+    var grenades: Int = GameConfig.GRENADE_CHARGES
+    var throwCooldown: Float = 0f
+    /** Seconds accumulated toward the next grenade charge while below max. */
+    var grenadeRecharge: Float = 0f
 
     val isPowered: Boolean get() = powerTime > 0f
 
@@ -108,11 +108,31 @@ class Pickup(
     val type: Int,
 )
 
-class Mine(
+class Grenade(
     var x: Float,
     var y: Float,
     val owner: Int,
 ) {
-    var armTime: Float = 0f
-    var armed: Boolean = false
+    var startX: Float = x
+    var startY: Float = y
+    var targetX: Float = x
+    var targetY: Float = y
+
+    /** 0..1 progress of the throw; 1 means it has landed. */
+    var flight: Float = 1f
+    var landed: Boolean = true
+    var fuse: Float = GameConfig.GRENADE_FUSE_TIME
+
+    /** Lob it from the tank to [toX]/[toY]. Tiles do not stop the flight. */
+    fun launch(fromX: Float, fromY: Float, toX: Float, toY: Float) {
+        startX = fromX
+        startY = fromY
+        targetX = toX
+        targetY = toY
+        x = fromX
+        y = fromY
+        flight = 0f
+        landed = false
+        fuse = GameConfig.GRENADE_FUSE_TIME
+    }
 }

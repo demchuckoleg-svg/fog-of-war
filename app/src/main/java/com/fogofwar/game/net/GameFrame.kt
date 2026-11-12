@@ -12,9 +12,9 @@ data class TankSnap(
     val turretDir: Float,
     val hp: Int,
     val flags: Int,
-    val mines: Int,
+    val grenades: Int,
     val cooldown: Float,
-    val mineRecharge: Float = 0f,
+    val grenadeRecharge: Float = 0f,
 ) {
     val alive: Boolean get() = flags and GameConfig.FLAG_ALIVE != 0
     val lightsOn: Boolean get() = flags and GameConfig.FLAG_LIGHTS != 0
@@ -28,14 +28,14 @@ data class BulletSnap(val x: Float, val y: Float)
 
 data class PickupSnap(val type: Int, val x: Float, val y: Float)
 
-data class MineSnap(val x: Float, val y: Float, val armed: Boolean, val owner: Int)
+data class GrenadeSnap(val x: Float, val y: Float, val landed: Boolean, val owner: Int)
 
 data class Snapshot(
     val tick: Long,
     val tanks: List<TankSnap>,
     val bullets: List<BulletSnap>,
     val pickups: List<PickupSnap>,
-    val mines: List<MineSnap>,
+    val grenades: List<GrenadeSnap>,
     val zoneRadius: Float,
     val sonarRadius: Float,
     val sonarActive: Boolean,
@@ -57,9 +57,9 @@ data class RenderTank(
     val invulnerable: Boolean,
     val powered: Boolean,
     val lightBoost: Boolean,
-    val mines: Int,
+    val grenades: Int,
     val cooldown: Float,
-    val mineRecharge: Float,
+    val grenadeRecharge: Float,
 )
 
 /** Immutable view of the world that the renderer consumes once per frame. */
@@ -71,7 +71,7 @@ data class GameFrame(
     val tanks: List<RenderTank>,
     val bullets: List<BulletSnap>,
     val pickups: List<PickupSnap>,
-    val mines: List<MineSnap>,
+    val grenades: List<GrenadeSnap>,
     val zoneRadius: Float,
     val sonarRadius: Float,
     val sonarActive: Boolean,

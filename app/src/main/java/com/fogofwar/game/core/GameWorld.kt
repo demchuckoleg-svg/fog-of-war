@@ -21,7 +21,7 @@ class GameWorld(
     val tanks = ArrayList<Tank>()
     val bullets = ArrayList<Bullet>()
     val pickups = ArrayList<Pickup>()
-    val mines = ArrayList<Mine>()
+    val grenades = ArrayList<Grenade>()
 
     /** Tile changes produced since the last drain, streamed to clients. */
     private val pendingTileChanges = ArrayList<TileChange>()
@@ -54,7 +54,7 @@ class GameWorld(
     private val bots = HashMap<Int, BotController>()
     private var startedWithOpponents = false
     private val pendingRemovals = java.util.concurrent.ConcurrentLinkedQueue<Int>()
-    private val previousDrop = HashMap<Int, Boolean>()
+    private val previousThrow = HashMap<Int, Boolean>()
     private val rng = Rng(seed xor 0x5DEECE66DL)
 
     val centerX: Float get() = GameConfig.WORLD_SIZE / 2f
@@ -89,7 +89,7 @@ class GameWorld(
         inputs.remove(slot)
         lastInputNanos.remove(slot)
         bots.remove(slot)
-        previousDrop.remove(slot)
+        previousThrow.remove(slot)
     }
 
     /** Thread-safe removal request, processed at the start of the next tick. */
@@ -138,7 +138,7 @@ class GameWorld(
         }
         resolveTankCollisions()
         updateBullets(dt)
-        updateMines(dt)
+        updateGrenades(dt)
         updatePickups(dt)
         updateZone(dt)
         updateSonar(dt)
@@ -150,11 +150,11 @@ class GameWorld(
         tank.invuln = max(0f, tank.invuln - dt)
         tank.powerTime = max(0f, tank.powerTime - dt)
         tank.lightTime = max(0f, tank.lightTime - dt)
-        tank.dropCooldown = max(0f, tank.dropCooldown - dt)
+        tank.throwCooldown = max(0f, tank.throwCooldown - dt)
         tank.lightsOn = input.lights
         if (!tank.alive) {
             tank.moving = false
-            previousDrop[tank.slot] = input.dropMine
+            previousThrow[tank.slot] = input.throwGrenade
             return
         }
 
@@ -179,14 +179,14 @@ class GameWorld(
         // Sonar stealth and tread animation use real displacement, not a stick held against a wall.
         tank.moving = hypot(tank.x - startX, tank.y - startY) > 0.5f
 
-        if (tank.mines < GameConfig.MINE_CHARGES) {
-            tank.mineRecharge += dt
-            if (tank.mineRecharge >= GameConfig.MINE_RECHARGE_TIME) {
-                tank.mineRecharge = 0f
-                tank.mines = (tank.mines + 1).coerceAtMost(GameConfig.MINE_CHARGES)
+        if (tank.grenades < GameConfig.GRENADE_CHARGES) {
+            tank.grenadeRecharge += dt
+            if (tank.grenadeRecharge >= GameConfig.GRENADE_RECHARGE_TIME) {
+                tank.grenadeRecharge = 0f
+                tank.grenades = (tank.grenades + 1).coerceAtMost(GameConfig.GRENADE_CHARGES)
             }
         } else {
-            tank.mineRecharge = 0f
+            tank.grenadeRecharge = 0f
         }
 
         // Hull-independent turret: aim stick wins, otherwise lazily recenters while driving.
@@ -209,10 +209,10 @@ class GameWorld(
             fire(tank)
         }
 
-        val dropEdge = input.dropMine && previousDrop[tank.slot] != true
-        previousDrop[tank.slot] = input.dropMine
-        if (dropEdge && tank.mines > 0 && tank.dropCooldown <= 0f) {
-            dropMine(tank)
+        val throwEdge = input.throwGrenade && previousThrow[tank.slot] != true
+        previousThrow[tank.slot] = input.throwGrenade
+        if (throwEdge && tank.grenades > 0 && tank.throwCooldown <= 0f) {
+            throwGrenade(tank)
         }
     }
 
@@ -285,15 +285,21 @@ class GameWorld(
         pendingEffects.add(EffectEvent(EffectKind.SHOT, mx, my))
     }
 
-    private fun dropMine(tank: Tank) {
-        tank.mines -= 1
-        tank.dropCooldown = GameConfig.MINE_DROP_COOLDOWN
-        val dist = GameConfig.TANK_HALF + 9f
-        val mx = tank.x - cos(tank.bodyDir) * dist
-        val my = tank.y - sin(tank.bodyDir) * dist
-        val x = if (map.isFreeForTankBox(mx, my, 8f)) mx else tank.x
-        val y = if (map.isFreeForTankBox(x, my, 8f)) my else tank.y
-        mines.add(Mine(x, y, tank.slot))
+    private fun throwGrenade(tank: Tank) {
+        tank.grenades -= 1
+        tank.throwCooldown = GameConfig.GRENADE_THROW_COOLDOWN
+        val startDist = GameConfig.TANK_HALF + 6f
+        val startX = tank.x + cos(tank.turretDir) * startDist
+        val startY = tank.y + sin(tank.turretDir) * startDist
+        val targetX = (startX + cos(tank.turretDir) * GameConfig.GRENADE_THROW_RANGE)
+            .coerceIn(GameConfig.TILE, GameConfig.WORLD_SIZE - GameConfig.TILE)
+        val targetY = (startY + sin(tank.turretDir) * GameConfig.GRENADE_THROW_RANGE)
+            .coerceIn(GameConfig.TILE, GameConfig.WORLD_SIZE - GameConfig.TILE)
+        Grenade(startX, startY, tank.slot).also {
+            it.launch(startX, startY, targetX, targetY)
+            grenades.add(it)
+        }
+        pendingEffects.add(EffectEvent(EffectKind.SHOT, startX, startY))
     }
 
     private fun updateBullets(dt: Float) {
@@ -318,15 +324,16 @@ class GameWorld(
                     break
                 }
 
-                var detonatedMine: Mine? = null
-                for (mine in mines) {
-                    if (hypot(mine.x - bullet.x, mine.y - bullet.y) <= 16f) {
-                        detonatedMine = mine
+                var detonatedGrenade: Grenade? = null
+                for (grenade in grenades) {
+                    if (!grenade.landed) continue
+                    if (hypot(grenade.x - bullet.x, grenade.y - bullet.y) <= 16f) {
+                        detonatedGrenade = grenade
                         break
                     }
                 }
-                if (detonatedMine != null) {
-                    detonateMine(detonatedMine)
+                if (detonatedGrenade != null) {
+                    detonateGrenade(detonatedGrenade)
                     removed = true
                     break
                 }
@@ -351,58 +358,57 @@ class GameWorld(
         }
     }
 
-    private fun updateMines(dt: Float) {
-        for (mine in mines) {
-            if (mine.armed) continue
-            mine.armTime += dt
-            if (mine.armTime >= GameConfig.MINE_ARM_TIME) mine.armed = true
-        }
-        val snapshot = ArrayList(mines)
-        for (mine in snapshot) {
-            if (!mine.armed) continue
-            for (tank in tanks) {
-                if (!tank.alive || tank.slot == mine.owner) continue
-                if (hypot(tank.x - mine.x, tank.y - mine.y) <= GameConfig.MINE_TRIGGER_RADIUS) {
-                    detonateMine(mine)
-                    break
+    private fun updateGrenades(dt: Float) {
+        for (grenade in ArrayList(grenades)) {
+            if (!grenade.landed) {
+                grenade.flight = (grenade.flight + dt / GameConfig.GRENADE_FLIGHT_TIME)
+                    .coerceAtMost(1f)
+                grenade.x = grenade.startX + (grenade.targetX - grenade.startX) * grenade.flight
+                grenade.y = grenade.startY + (grenade.targetY - grenade.startY) * grenade.flight
+                if (grenade.flight >= 1f) {
+                    grenade.landed = true
+                    grenade.fuse = GameConfig.GRENADE_FUSE_TIME
                 }
+                continue
             }
+            grenade.fuse -= dt
+            if (grenade.fuse <= 0f) detonateGrenade(grenade)
         }
     }
 
-    /** Detonates a mine, destroys brick around it, damages tanks and chains nearby mines. */
-    fun detonateMine(first: Mine) {
-        val work = ArrayList<Mine>()
+    /** Detonates a grenade, destroys brick around it, damages tanks and chains nearby grenades. */
+    fun detonateGrenade(first: Grenade) {
+        val work = ArrayList<Grenade>()
         work.add(first)
         while (work.isNotEmpty()) {
-            val mine = work.removeAt(work.size - 1)
-            if (!mines.remove(mine)) continue
-            pendingEffects.add(EffectEvent(EffectKind.EXPLOSION, mine.x, mine.y, GameConfig.MINE_BLAST_RADIUS))
+            val grenade = work.removeAt(work.size - 1)
+            if (!grenades.remove(grenade)) continue
+            pendingEffects.add(EffectEvent(EffectKind.EXPLOSION, grenade.x, grenade.y, GameConfig.GRENADE_BLAST_RADIUS))
 
-            val tx0 = floor((mine.x - GameConfig.MINE_BLAST_RADIUS) / GameConfig.TILE).toInt()
-            val tx1 = floor((mine.x + GameConfig.MINE_BLAST_RADIUS) / GameConfig.TILE).toInt()
-            val ty0 = floor((mine.y - GameConfig.MINE_BLAST_RADIUS) / GameConfig.TILE).toInt()
-            val ty1 = floor((mine.y + GameConfig.MINE_BLAST_RADIUS) / GameConfig.TILE).toInt()
+            val tx0 = floor((grenade.x - GameConfig.GRENADE_BLAST_RADIUS) / GameConfig.TILE).toInt()
+            val tx1 = floor((grenade.x + GameConfig.GRENADE_BLAST_RADIUS) / GameConfig.TILE).toInt()
+            val ty0 = floor((grenade.y - GameConfig.GRENADE_BLAST_RADIUS) / GameConfig.TILE).toInt()
+            val ty1 = floor((grenade.y + GameConfig.GRENADE_BLAST_RADIUS) / GameConfig.TILE).toInt()
             for (ty in ty0..ty1) {
                 for (tx in tx0..tx1) {
                     val tile = map.tileAt(tx, ty)
                     if (tile != Tile.BRICK && tile != Tile.CRACKED) continue
                     val cx = (tx + 0.5f) * GameConfig.TILE
                     val cy = (ty + 0.5f) * GameConfig.TILE
-                    if (hypot(cx - mine.x, cy - mine.y) > GameConfig.MINE_BLAST_RADIUS) continue
+                    if (hypot(cx - grenade.x, cy - grenade.y) > GameConfig.GRENADE_BLAST_RADIUS) continue
                     map.hitHard(tx, ty)?.let { pendingTileChanges.add(it) }
                 }
             }
 
             for (tank in tanks) {
-                if (!tank.alive || tank.slot == mine.owner) continue
-                if (hypot(tank.x - mine.x, tank.y - mine.y) <= GameConfig.MINE_BLAST_RADIUS + GameConfig.TANK_HALF) {
-                    damage(tank, mine.owner, ignoreInvuln = false)
+                if (!tank.alive || tank.slot == grenade.owner) continue
+                if (hypot(tank.x - grenade.x, tank.y - grenade.y) <= GameConfig.GRENADE_BLAST_RADIUS + GameConfig.TANK_HALF) {
+                    damage(tank, grenade.owner, ignoreInvuln = false)
                 }
             }
 
-            for (other in ArrayList(mines)) {
-                if (hypot(other.x - mine.x, other.y - mine.y) <= GameConfig.MINE_BLAST_RADIUS) {
+            for (other in ArrayList(grenades)) {
+                if (hypot(other.x - grenade.x, other.y - grenade.y) <= GameConfig.GRENADE_BLAST_RADIUS) {
                     work.add(other)
                 }
             }
@@ -449,7 +455,7 @@ class GameWorld(
             if (hypot(x - centerX, y - centerY) > (zoneRadius * 0.8f).coerceAtLeast(60f)) continue
             if (tanks.any { it.distanceTo(x, y) < 170f }) continue
             if (pickups.any { hypot(it.x - x, it.y - y) < 150f }) continue
-            if (mines.any { hypot(it.x - x, it.y - y) < 90f }) continue
+            if (grenades.any { hypot(it.x - x, it.y - y) < 90f }) continue
             // Avoid re-rolling the same type twice in a row too often.
             var type = when (rng.nextInt(10)) {
                 in 0..3 -> GameConfig.PICKUP_REPAIR

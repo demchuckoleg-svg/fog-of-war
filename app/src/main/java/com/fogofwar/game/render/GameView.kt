@@ -19,6 +19,7 @@ import android.util.Log
 import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import android.widget.Toast
 import com.fogofwar.game.App
 import com.fogofwar.game.core.EffectKind
 import com.fogofwar.game.core.GameConfig
@@ -157,7 +158,7 @@ class GameView @JvmOverloads constructor(
     @Volatile private var aimX = 0f
     @Volatile private var aimY = 0f
     @Volatile private var lightsOn = true
-    @Volatile private var dropMineRequest = false
+    @Volatile private var throwGrenadeRequest = false
 
     /** Queued one-shot: send fire=true with this angle for a couple of input ticks. */
     @Volatile private var shotAngle = Float.NaN
@@ -180,13 +181,13 @@ class GameView @JvmOverloads constructor(
 
     @Volatile private var movePointerId = -1
     @Volatile private var aimPointerId = -1
-    @Volatile private var minePointerId = -1
+    @Volatile private var grenadePointerId = -1
 
     private var moveRadius = 0f
     private var moveKnobRadius = 0f
     private var aimRadius = 0f
     private var aimKnobRadius = 0f
-    private var mineRadius = 0f
+    private var grenadeRadius = 0f
     private var lightRadius = 0f
 
     private var hintUntil = 0L
@@ -194,6 +195,18 @@ class GameView @JvmOverloads constructor(
     private var lastMySlot = -1
     private var shakeUntil = 0L
     private var shakePower = 0f
+    private var shakeDX = 0f
+    private var shakeDY = 0f
+
+    private val perf = PerfOverlay()
+    @Volatile private var minimapLeft = 0f
+    @Volatile private var minimapTop = 0f
+    @Volatile private var minimapSize = 0f
+    private var perfTapCount = 0
+    private var perfTapAt = 0L
+    private var renderRestarts = 0
+    private var lastRestartAt = 0L
+    private var renderErrorUntil = 0L
 
     @Volatile private var safeLeft = 0
     @Volatile private var safeTop = 0
@@ -204,6 +217,7 @@ class GameView @JvmOverloads constructor(
         holder.addCallback(this)
         isFocusable = true
         keepScreenOn = true
+        perf.enabled = prefs.getBoolean("perf_overlay", false)
         SpriteAtlas.warmUp(context)
     }
 
@@ -306,9 +320,9 @@ class GameView @JvmOverloads constructor(
                     }
                 }
 
-                if (now - lastInput >= 50L) {
+                if (now - lastInput >= 1_000L / GameConfig.INPUT_SEND_HZ) {
                     lastInput = now
-                    val dropRequested = dropMineRequest
+                    val grenadeRequested = throwGrenadeRequest
                     val tapAngle = shotAngle
                     val hasShot = shotSendsLeft > 0 && !tapAngle.isNaN()
                     net.sendInput(
@@ -317,13 +331,13 @@ class GameView @JvmOverloads constructor(
                         if (hasShot) sin(tapAngle) else aimY,
                         fire = hasShot,
                         lights = lightsOn,
-                        dropMine = dropRequested,
+                        throwGrenade = grenadeRequested,
                     )
                     if (hasShot) {
                         shotSendsLeft -= 1
                         if (shotSendsLeft <= 0) shotAngle = Float.NaN
                     }
-                    if (dropRequested) dropMineRequest = false
+                    if (grenadeRequested) throwGrenadeRequest = false
                 }
 
                 val frame = net.currentFrame()
@@ -333,7 +347,7 @@ class GameView @JvmOverloads constructor(
                 }
                 val canvas = holder.lockCanvas()
                 if (canvas == null) {
-                    SystemClock.sleep(8)
+                    SystemClock.sleep(4)
                     continue
                 }
                 try {
@@ -342,11 +356,32 @@ class GameView @JvmOverloads constructor(
                     holder.unlockCanvasAndPost(canvas)
                 }
                 failures = 0
+                if (renderRestarts > 0 &&
+                    SystemClock.elapsedRealtime() - lastRestartAt > 10_000L
+                ) {
+                    renderRestarts = 0
+                }
             } catch (t: Throwable) {
                 if (running && renderGeneration.get() == generation) {
                     failures++
                     Log.e("GameView", "render loop failed ($failures)", t)
-                    if (failures >= 3) pauseRendering()
+                    if (failures >= 3) {
+                        if (renderRestarts >= 3) {
+                            Log.e("GameView", "render failed too many times; giving up")
+                            net.reportError("Не удалось восстановить рендер. Перезапустите приложение.")
+                            pauseRendering()
+                            return
+                        }
+                        renderRestarts++
+                        lastRestartAt = SystemClock.elapsedRealtime()
+                        renderErrorUntil = lastRestartAt + 2_500L
+                        renderGeneration.incrementAndGet()
+                        renderThread = null
+                        postDelayed({
+                            if (running && holder.surface?.isValid == true) startThread()
+                        }, 400L)
+                        return
+                    }
                 }
             }
             val elapsedMs = (System.nanoTime() - frameStart) / 1_000_000L
@@ -368,8 +403,8 @@ class GameView @JvmOverloads constructor(
         return true
     }
 
-    private fun mineButtonX() = width - safeRight - 92f * density
-    private fun mineButtonY() = height - safeBottom - 92f * density
+    private fun grenadeButtonX() = width - safeRight - 92f * density
+    private fun grenadeButtonY() = height - safeBottom - 92f * density
     private fun lightButtonX() = safeLeft + 40f * density
     private fun lightButtonY() = safeTop + 152f * density
 
@@ -378,18 +413,40 @@ class GameView @JvmOverloads constructor(
         val x = event.getX(index)
         val y = event.getY(index)
 
+        val tapNow = SystemClock.elapsedRealtime()
+        if (minimapSize > 0f &&
+            x >= minimapLeft && x <= minimapLeft + minimapSize &&
+            y >= minimapTop && y <= minimapTop + minimapSize
+        ) {
+            // Five taps on the minimap toggle the diagnostics overlay.
+            if (tapNow - perfTapAt > 1_500L) perfTapCount = 0
+            perfTapAt = tapNow
+            perfTapCount++
+            if (perfTapCount >= 5) {
+                perfTapCount = 0
+                perf.enabled = !perf.enabled
+                prefs.edit().putBoolean("perf_overlay", perf.enabled).apply()
+                Toast.makeText(
+                    context,
+                    if (perf.enabled) "Оверлей производительности включён" else "Оверлей выключен",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+            return
+        }
+
         if (hypot(x - lightButtonX(), y - lightButtonY()) <= lightRadius) {
             lightsOn = !lightsOn
             return
         }
-        if (hypot(x - mineButtonX(), y - mineButtonY()) <= mineRadius && minePointerId == -1) {
-            minePointerId = id
-            dropMineRequest = true
+        if (hypot(x - grenadeButtonX(), y - grenadeButtonY()) <= grenadeRadius && grenadePointerId == -1) {
+            grenadePointerId = id
+            throwGrenadeRequest = true
             return
         }
 
-        // A second finger landing on the already-held mine button must not become the aim stick.
-        if (x >= width / 2f && hypot(x - mineButtonX(), y - mineButtonY()) <= mineRadius) return
+        // A second finger landing on the already-held grenade button must not become the aim stick.
+        if (x >= width / 2f && hypot(x - grenadeButtonX(), y - grenadeButtonY()) <= grenadeRadius) return
 
         if (x < width / 2f && movePointerId == -1) {
             movePointerId = id
@@ -491,13 +548,13 @@ class GameView @JvmOverloads constructor(
             aimY = 0f
             queueShot(angle)
         }
-        if (id == minePointerId) minePointerId = -1
+        if (id == grenadePointerId) grenadePointerId = -1
     }
 
     private fun resetInput() {
         movePointerId = -1
         aimPointerId = -1
-        minePointerId = -1
+        grenadePointerId = -1
         moveActive = false
         aimActive = false
         aimDragged = false
@@ -505,7 +562,7 @@ class GameView @JvmOverloads constructor(
         moveY = 0f
         aimX = 0f
         aimY = 0f
-        dropMineRequest = false
+        throwGrenadeRequest = false
         shotAngle = Float.NaN
         shotSendsLeft = 0
     }
@@ -596,7 +653,7 @@ class GameView @JvmOverloads constructor(
         moveKnobRadius = 24f * density
         aimRadius = 50f * density
         aimKnobRadius = 21f * density
-        mineRadius = 36f * density
+        grenadeRadius = 36f * density
         lightRadius = 24f * density
         moveBaseX = 104f * density
         moveBaseY = h - 104f * density
@@ -621,6 +678,7 @@ class GameView @JvmOverloads constructor(
 
         val me = frame.me
         val now = SystemClock.elapsedRealtime()
+        val drawStart = System.nanoTime()
         updateFeed(frame, now)
         updateLastSeen(frame, now)
         val center = GameConfig.WORLD_SIZE / 2f
@@ -645,8 +703,8 @@ class GameView @JvmOverloads constructor(
         }
 
         canvas.save()
-        val shake = shakeOffset(now)
-        canvas.translate(camera.offsetX + shake.first, camera.offsetY + shake.second)
+        updateShake(now)
+        canvas.translate(camera.offsetX + shakeDX, camera.offsetY + shakeDY)
         canvas.scale(camera.scale, camera.scale)
 
         drawWorld(canvas, frame, now)
@@ -654,10 +712,16 @@ class GameView @JvmOverloads constructor(
         effects.draw(canvas)
         drawBullets(canvas, frame)
         drawPickups(canvas, frame, now)
-        drawMines(canvas, frame, now)
+        drawGrenades(canvas, frame, now)
+        val worldDone = System.nanoTime()
+
         drawTanks(canvas, frame, now)
+        val tanksDone = System.nanoTime()
+
         drawFog(canvas, frame, me, now)
         drawRevealedTanks(canvas, frame, now)
+        val fogDone = System.nanoTime()
+
         drawEnemyBeams(canvas, frame)
         drawZone(canvas, frame)
         drawSonar(canvas, frame)
@@ -668,16 +732,38 @@ class GameView @JvmOverloads constructor(
         canvas.restore()
 
         drawHud(canvas, frame, now)
+        val hudDone = System.nanoTime()
+
+        if (perf.enabled) {
+            perf.sections[0] = (worldDone - drawStart) / 1_000_000f
+            perf.sections[1] = (tanksDone - worldDone) / 1_000_000f
+            perf.sections[2] = (fogDone - tanksDone) / 1_000_000f
+            perf.sections[3] = (hudDone - fogDone) / 1_000_000f
+            val total = System.nanoTime() - drawStart
+            perf.sections[4] = total / 1_000_000f
+            perf.frame(total)
+            perf.draw(
+                canvas,
+                safeLeft + 12f * density,
+                safeTop + 134f * density,
+                10f * scaledDensity,
+                net.bytesSent.get(),
+                net.bytesReceived.get(),
+            )
+        }
     }
 
-    private fun shakeOffset(now: Long): Pair<Float, Float> {
+    private fun updateShake(now: Long) {
         if (now >= shakeUntil) {
             shakePower = 0f
-            return 0f to 0f
+            shakeDX = 0f
+            shakeDY = 0f
+            return
         }
         val fade = ((shakeUntil - now) / 320f).coerceIn(0f, 1f)
         val power = shakePower * fade
-        return sin(now * 0.09f) * power to cos(now * 0.13f) * power
+        shakeDX = sin(now * 0.09f) * power
+        shakeDY = cos(now * 0.13f) * power
     }
 
     private fun addShake(power: Float, durationMs: Long) {
@@ -854,14 +940,20 @@ class GameView @JvmOverloads constructor(
         }
     }
 
-    private fun drawMines(canvas: Canvas, frame: GameFrame, now: Long) {
-        for (mine in frame.mines) {
-            val blink = mine.armed && (now / 380L) % 2L == 0L
-            spriteRect.set(mine.x - 11f, mine.y - 11f, mine.x + 11f, mine.y + 11f)
-            canvas.drawBitmap(SpriteAtlas.mine(mine.armed), null, spriteRect, spritePaint)
-            if (blink) {
-                bulletPaint.color = 0x66FF4040
-                canvas.drawCircle(mine.x, mine.y, 10f, bulletPaint)
+    private fun drawGrenades(canvas: Canvas, frame: GameFrame, now: Long) {
+        for (grenade in frame.grenades) {
+            val lift = if (grenade.landed) 0f else 12f
+            hudPaint.color = 0x55000000
+            canvas.drawCircle(grenade.x, grenade.y + 3f, if (grenade.landed) 9f else 6f, hudPaint)
+            spriteRect.set(
+                grenade.x - 10f, grenade.y - 10f - lift,
+                grenade.x + 10f, grenade.y + 10f - lift,
+            )
+            canvas.drawBitmap(SpriteAtlas.grenade(), null, spriteRect, spritePaint)
+            if (grenade.landed) {
+                val pulse = sin(now / 100f) * 0.5f + 0.5f
+                bulletPaint.color = ((50 + 100 * pulse).toInt() shl 24) or 0x00FF5030
+                canvas.drawCircle(grenade.x, grenade.y, 13f + 4f * pulse, bulletPaint)
             }
         }
     }
@@ -1142,30 +1234,33 @@ class GameView @JvmOverloads constructor(
         hudPaint.color = if (aimActive) 0x8857D68B.toInt() else 0x5557D68B
         canvas.drawCircle(aimKnobXDraw, aimKnobYDraw, aimKnobRadius, hudPaint)
 
-        // Mine button.
-        val mx = mineButtonX()
-        val my = mineButtonY()
+        // Grenade button.
+        val mx = grenadeButtonX()
+        val my = grenadeButtonY()
         hudPaint.color = 0x22000000
-        canvas.drawCircle(mx, my, mineRadius, hudPaint)
+        canvas.drawCircle(mx, my, grenadeRadius, hudPaint)
         strokePaint.color = 0x55B0B0B0
         strokePaint.strokeWidth = 1.5f * density
-        canvas.drawCircle(mx, my, mineRadius, strokePaint)
+        canvas.drawCircle(mx, my, grenadeRadius, strokePaint)
         spriteRect.set(mx - 18f * density, my - 18f * density, mx + 18f * density, my + 18f * density)
-        canvas.drawBitmap(SpriteAtlas.mine(true), null, spriteRect, spritePaint)
-        val minesLeft = me?.mines ?: 0
-        if (me != null && minesLeft < GameConfig.MINE_CHARGES) {
+        canvas.drawBitmap(SpriteAtlas.grenade(), null, spriteRect, spritePaint)
+        val grenadesLeft = me?.grenades ?: 0
+        if (me != null && grenadesLeft < GameConfig.GRENADE_CHARGES) {
             arcPaint.strokeWidth = 4f * density
             arcPaint.color = 0xAA57D68B.toInt()
             arcRect.set(
-                mx - mineRadius - 8f * density, my - mineRadius - 8f * density,
-                mx + mineRadius + 8f * density, my + mineRadius + 8f * density,
+                mx - grenadeRadius - 8f * density, my - grenadeRadius - 8f * density,
+                mx + grenadeRadius + 8f * density, my + grenadeRadius + 8f * density,
             )
-            canvas.drawArc(arcRect, -90f, 360f * me.mineRecharge, false, arcPaint)
+            canvas.drawArc(arcRect, -90f, 360f * me.grenadeRecharge, false, arcPaint)
         }
         textPaint.textAlign = Paint.Align.CENTER
         textPaint.textSize = 12f * scaledDensity
-        textPaint.color = if ((me?.mines ?: 0) > 0) COLOR_TEXT else 0x55FFFFFF
-        canvas.drawText("${me?.mines ?: 0}", mx + mineRadius * 0.8f, my + mineRadius * 0.9f, textPaint)
+        textPaint.color = if ((me?.grenades ?: 0) > 0) COLOR_TEXT else 0x55FFFFFF
+        canvas.drawText("${me?.grenades ?: 0}", mx + grenadeRadius * 0.8f, my + grenadeRadius * 0.9f, textPaint)
+        textPaint.textSize = 9f * scaledDensity
+        textPaint.color = 0x99FFFFFF.toInt()
+        canvas.drawText("ГРАНАТА", mx, my + grenadeRadius + 14f * density, textPaint)
 
         // Headlight toggle.
         val lx = lightButtonX()
@@ -1234,8 +1329,18 @@ class GameView @JvmOverloads constructor(
             textPaint.textSize = 12.5f * scaledDensity
             textPaint.color = ((alpha * 200).toInt() shl 24) or 0x00E6ECE9
             canvas.drawText(
-                "правый стик: тап — автоогонь, потяни и отпусти — выстрел · мина и фара — справа",
+                "правый стик: тап — автоогонь, потяни и отпусти — выстрел · граната и фара — справа",
                 w / 2f, safeTop + 150f * density, textPaint,
+            )
+        }
+
+        if (now < renderErrorUntil) {
+            drawCenteredText(
+                canvas,
+                "перезапуск рендера…",
+                safeTop + 182f * density,
+                14f,
+                0xCCFFB0A0.toInt(),
             )
         }
 
@@ -1289,6 +1394,9 @@ class GameView @JvmOverloads constructor(
         val size = 112f * density
         val left = safeLeft + 10f * density
         val top = safeTop + 10f * density
+        minimapLeft = left
+        minimapTop = top
+        minimapSize = size
 
         if (minimapMap !== map) {
             minimapMap = map

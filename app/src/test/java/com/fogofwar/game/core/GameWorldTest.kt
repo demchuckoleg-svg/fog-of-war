@@ -164,15 +164,15 @@ class GameWorldTest {
     }
 
     @Test
-    fun mineChargesRechargeOverTime() {
+    fun grenadeChargesRechargeOverTime() {
         val world = GameWorld(MapGenerator.generate(1, 52L), 1, 52L)
         val tank = world.addPlayer(0, "miner")
         world.addPlayer(1, "other")
-        tank.mines = 0
-        repeat((GameConfig.MINE_RECHARGE_TIME * GameConfig.TICK_HZ).toInt() + 2) {
+        tank.grenades = 0
+        repeat((GameConfig.GRENADE_RECHARGE_TIME * GameConfig.TICK_HZ).toInt() + 2) {
             world.step(GameConfig.TICK_DT)
         }
-        assertTrue("mine did not recharge", tank.mines >= 1)
+        assertTrue("grenade did not recharge", tank.grenades >= 1)
     }
 
     @Test
@@ -263,21 +263,49 @@ class GameWorldTest {
     }
 
     @Test
-    fun mineExplodesOnEnemyAndDamagesIt() {
+    fun grenadeExplodesAfterFuseAndDamagesEnemy() {
         val world = GameWorld(MapGenerator.generate(2, 23L), 2, 23L)
-        val owner = world.addPlayer(0, "miner")
+        val owner = world.addPlayer(0, "thrower")
         val enemy = world.addPlayer(1, "victim")
         owner.x = 1000f
         owner.y = 1024f
         enemy.x = 1060f
         enemy.y = 1024f
-        val mine = Mine(1040f, 1024f, 0)
-        mine.armTime = GameConfig.MINE_ARM_TIME
-        mine.armed = true
-        world.mines.add(mine)
+        val grenade = Grenade(1040f, 1024f, 0)
+        grenade.landed = true
+        grenade.fuse = 0.01f
+        world.grenades.add(grenade)
         world.step(GameConfig.TICK_DT)
         assertEquals(GameConfig.MAX_HP - 1, enemy.hp)
-        assertTrue(world.mines.isEmpty())
+        assertTrue(world.grenades.isEmpty())
         assertTrue(world.drainEffects().any { it.kind == EffectKind.EXPLOSION })
+    }
+
+    @Test
+    fun thrownGrenadeFliesOverAWallAndThenExplodes() {
+        val world = GameWorld(MapGenerator.generate(0, 41L), 0, 41L)
+        val tank = world.addPlayer(0, "thrower")
+        world.addPlayer(1, "other")
+        // Tile (32, 32) is the world centre; use a free spot and force a wall right in front.
+        tank.x = 32f * GameConfig.TILE
+        tank.y = 32f * GameConfig.TILE
+        tank.turretDir = 0f
+        world.grenades.clear()
+        tank.grenades = 1
+        tank.throwCooldown = 0f
+        world.setInput(0, TankInput(throwGrenade = true))
+        world.step(GameConfig.TICK_DT)
+        assertEquals(1, world.grenades.size)
+        val grenade = world.grenades.first()
+        assertFalse("grenade should start in flight", grenade.landed)
+        world.setInput(0, TankInput())
+        repeat((GameConfig.GRENADE_FLIGHT_TIME / GameConfig.TICK_DT).toInt() + 2) {
+            world.step(GameConfig.TICK_DT)
+        }
+        assertTrue("grenade should land", grenade.landed)
+        repeat((GameConfig.GRENADE_FUSE_TIME / GameConfig.TICK_DT).toInt() + 2) {
+            world.step(GameConfig.TICK_DT)
+        }
+        assertTrue("grenade should explode", world.grenades.isEmpty())
     }
 }

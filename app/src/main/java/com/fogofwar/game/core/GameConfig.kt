@@ -66,14 +66,17 @@ object GameConfig {
     const val LIGHT_RANGE_BOOST = 1.5f
     const val LIGHT_HALF_ANGLE_BOOST = 1.35f
 
-    /** Mines. */
-    const val MINE_CHARGES = 2
-    /** Seconds to regenerate one spent mine charge. */
-    const val MINE_RECHARGE_TIME = 8f
-    const val MINE_DROP_COOLDOWN = 0.5f
-    const val MINE_ARM_TIME = 0.7f
-    const val MINE_TRIGGER_RADIUS = 24f
-    const val MINE_BLAST_RADIUS = 64f
+    /** Grenades: lobbed over cover, short fuse, area damage. */
+    const val GRENADE_CHARGES = 2
+    /** Seconds to regenerate one spent grenade charge. */
+    const val GRENADE_RECHARGE_TIME = 9f
+    const val GRENADE_THROW_COOLDOWN = 0.8f
+    /** Time from the hand to the landing point; walls do not stop a lobbed grenade. */
+    const val GRENADE_FLIGHT_TIME = 0.45f
+    /** Fuse after landing. */
+    const val GRENADE_FUSE_TIME = 1.15f
+    const val GRENADE_THROW_RANGE = 245f
+    const val GRENADE_BLAST_RADIUS = 92f
 
     const val ROUND_OVER_DELAY = 5f
 
@@ -87,7 +90,7 @@ object GameConfig {
 
     /** Client renders this far in the past to interpolate between snapshots. */
     const val INTERPOLATION_DELAY_MS = 80L
-    const val SNAPSHOT_HZ = 30
+    const val SNAPSHOT_HZ = TICK_HZ / 2
     const val INPUT_SEND_HZ = 20
 
     /** Host treats a slot as idle when no input packet arrives for this long. */

@@ -29,7 +29,7 @@ class ClientRoundTest {
                 ),
                 bullets = listOf(BulletSnap(450f, 450f)),
                 pickups = listOf(PickupSnap(1, 600f, 600f)),
-                mines = listOf(MineSnap(700f, 700f, false, 0)),
+                grenades = listOf(GrenadeSnap(700f, 700f, false, 0)),
                 zoneRadius = 800f,
                 sonarRadius = 0f,
                 sonarActive = false,
@@ -43,7 +43,7 @@ class ClientRoundTest {
         assertEquals("guest", frame.me?.name)
         assertEquals(800f, frame.zoneRadius, 0.001f)
         assertEquals(1, frame.pickups.size)
-        assertEquals(1, frame.mines.size)
+        assertEquals(1, frame.grenades.size)
         assertEquals(1f, frame.tanks[1].turretDir, 0.001f)
     }
 
@@ -89,7 +89,7 @@ class ClientRoundTest {
         tanks = listOf(tank(0, x, 200f, body, turret, 3)),
         bullets = emptyList(),
         pickups = emptyList(),
-        mines = emptyList(),
+        grenades = emptyList(),
         zoneRadius = 900f,
         sonarRadius = 0f,
         sonarActive = false,
@@ -104,7 +104,7 @@ class ClientRoundTest {
         turretDir = turret,
         hp = hp,
         flags = GameConfig.FLAG_ALIVE or GameConfig.FLAG_LIGHTS,
-        mines = 2,
+        grenades = 2,
         cooldown = 0f,
     )
 }

@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -32,9 +33,9 @@ class GameActivity : AppCompatActivity(), NearbyNet.Listener {
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        binding.exitButton.setOnClickListener { leave() }
+        binding.exitButton.setOnClickListener { confirmLeave() }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() = leave()
+            override fun handleOnBackPressed() = confirmLeave()
         })
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.gameView) { view, insets ->
@@ -44,6 +45,23 @@ class GameActivity : AppCompatActivity(), NearbyNet.Listener {
             (view as GameView).setSafeInsets(cut.left, cut.top, cut.right, cut.bottom)
             insets
         }
+    }
+
+    private fun confirmLeave() {
+        if (isFinishing) return
+        val host = net.isHost
+        AlertDialog.Builder(this)
+            .setTitle(if (host) "Закрыть комнату?" else "Выйти из боя?")
+            .setMessage(
+                if (host) {
+                    "Раунд закончится для всех игроков, комната закроется."
+                } else {
+                    "Вы покинете комнату и вернётесь в меню."
+                }
+            )
+            .setPositiveButton(if (host) "Закрыть" else "Выйти") { _, _ -> leave() }
+            .setNegativeButton("Отмена", null)
+            .show()
     }
 
     private fun leave() {

@@ -380,44 +380,30 @@ object SpriteAtlas {
         "................"
     )
 
-    // --- Mine -------------------------------------------------------------
+    // --- Grenade ---------------------------------------------------------
 
-    private val MINE_UNARMED = arrayOf(
+    private val GRENADE = arrayOf(
         "................",
-        ".......TT.......",
-        ".......TT.......",
-        ".....TTTTTT.....",
-        "....TSWTTTTT....",
-        "...TSTTTTTTTT...",
-        "...TTTTTTTTTT...",
-        "TTTTTTTssTTTTTTT",
-        "TTTTTTTssTTTTTTT",
-        "...TTTTTTTTTT...",
-        "...TTTTTTTTTT...",
-        "....TTTTTTTT....",
-        ".....TTTTTT.....",
-        ".......TT.......",
-        ".......TT.......",
+        "........SS......",
+        ".......S..S.....",
+        ".......S..S.....",
+        "......SSSSSS....",
+        ".....SGGGGGGS...",
+        "....GGGGGGGGGG..",
+        "....GGHHGGGGGG..",
+        "....GGGGGGGGGG..",
+        "....GGGGGGGGGG..",
+        ".....GGGGGGGG...",
+        "......GGGGGG....",
+        ".......GGGG.....",
+        "................",
+        "................",
         "................"
     )
 
-    private val MINE_ARMED = arrayOf(
-        "................",
-        ".......TT.......",
-        ".......TT.......",
-        ".....TTTTTT.....",
-        "....TSWTTTTT....",
-        "...TSTTTTTTTT...",
-        "...TTTTWTTTTT...",
-        "TTTTTTTRRTTTTTTT",
-        "TTTTTTTRRTTTTTTT",
-        "...TTTTTTTTTT...",
-        "...TTTTTTTTTT...",
-        "....TTTTTTTT....",
-        ".....TTTTTT.....",
-        ".......TT.......",
-        ".......TT.......",
-        "................"
+    private val GRENADE_PALETTE = BASE + mapOf(
+        'G' to 0xFF3E5A34.toInt(),
+        'H' to 0xFF7FA35E.toInt()
     )
 
     // --- Explosion frames: core -> fireball -> smoke. --------------------
@@ -505,8 +491,7 @@ object SpriteAtlas {
         wall(Tile.WATER, 0)
         wall(Tile.WATER, 1)
         for (t in 0..2) pickup(t)
-        mine(false)
-        mine(true)
+        grenade()
         wreck()
         for (f in 0..2) explosion(f)
     }
@@ -568,10 +553,9 @@ object SpriteAtlas {
     @Synchronized
     fun wreck(): Bitmap = cached("wreck", WRECK, WRECK_PALETTE)
 
-    /** Anti-tank mine; [armed] shows the red trigger dot. */
+    /** Lobbed fragmentation grenade. */
     @Synchronized
-    fun mine(armed: Boolean): Bitmap =
-        if (armed) cached("mine:armed", MINE_ARMED) else cached("mine:unarmed", MINE_UNARMED)
+    fun grenade(): Bitmap = cached("grenade", GRENADE, GRENADE_PALETTE)
 
     /** Explosion animation frame, clamped to 0..2. */
     @Synchronized

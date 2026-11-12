@@ -44,7 +44,7 @@ class ProtocolTest {
             ),
             bullets = listOf(BulletSnap(300f, 400f), BulletSnap(500f, 600f)),
             pickups = listOf(PickupSnap(1, 350f, 360f)),
-            mines = listOf(MineSnap(700f, 710f, true, 0)),
+            grenades = listOf(GrenadeSnap(700f, 710f, true, 0)),
             zoneRadius = 900f,
             sonarRadius = 250f,
             sonarActive = true,
@@ -58,7 +58,7 @@ class ProtocolTest {
         assertEquals(100.5f, parsed.tanks[0].x, 0.001f)
         assertEquals(200.25f, parsed.tanks[0].y, 0.001f)
         assertEquals(1.2f, parsed.tanks[0].turretDir, 0.001f)
-        assertEquals(2, parsed.tanks[0].mines)
+        assertEquals(2, parsed.tanks[0].grenades)
         assertTrue(parsed.tanks[0].alive)
         assertTrue(parsed.tanks[0].lightsOn)
         assertTrue(parsed.tanks[0].moving)
@@ -67,8 +67,8 @@ class ProtocolTest {
         assertEquals(2, parsed.bullets.size)
         assertEquals(1, parsed.pickups.size)
         assertEquals(1, parsed.pickups[0].type)
-        assertEquals(1, parsed.mines.size)
-        assertTrue(parsed.mines[0].armed)
+        assertEquals(1, parsed.grenades.size)
+        assertTrue(parsed.grenades[0].landed)
         assertEquals(900f, parsed.zoneRadius, 0.001f)
         assertTrue(parsed.sonarActive)
         assertEquals(1, parsed.events.size)
@@ -100,7 +100,7 @@ class ProtocolTest {
             tanks = emptyList(),
             bullets = (0 until 300).map { BulletSnap(it.toFloat(), it.toFloat()) },
             pickups = emptyList(),
-            mines = emptyList(),
+            grenades = emptyList(),
             zoneRadius = 500f,
             sonarRadius = 0f,
             sonarActive = false,
@@ -137,7 +137,7 @@ class ProtocolTest {
         assertEquals(0.25f, input.aimY, 0.01f)
         assertTrue(input.fire)
         assertFalse(input.lights)
-        assertTrue(input.dropMine)
+        assertTrue(input.throwGrenade)
     }
 
     @Test

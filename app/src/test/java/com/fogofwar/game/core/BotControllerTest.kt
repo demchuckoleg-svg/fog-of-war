@@ -48,7 +48,7 @@ class BotControllerTest {
     }
 
     @Test
-    fun botDropsAMineWhenAnEnemyIsClose() {
+    fun botThrowsAGrenadeWhenAnEnemyIsClose() {
         val world = arena()
         val bot = world.addBot(0, "Бот")
         val enemy = world.addPlayer(1, "Игрок")
@@ -60,7 +60,7 @@ class BotControllerTest {
 
         val input = BotController(0, Rng(7L)).update(world, GameConfig.TICK_DT)
 
-        assertTrue(input.dropMine)
+        assertTrue(input.throwGrenade)
     }
 
     /** Empty 40x40 map, no walls, both spawns present. */

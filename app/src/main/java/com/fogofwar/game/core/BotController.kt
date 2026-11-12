@@ -98,7 +98,7 @@ class BotController(private val slot: Int, private val rng: Rng) {
         var fire = false
         var aimX = 0f
         var aimY = 0f
-        var dropMine = false
+        var throwGrenade = false
         if (enemy != null) {
             val dx = enemy.x - me.x
             val dy = enemy.y - me.y
@@ -108,7 +108,7 @@ class BotController(private val slot: Int, private val rng: Rng) {
                 aimY = dy / dist
             }
             // Leave a present behind when somebody is breathing down the hull.
-            if (dist < 120f && me.mines > 0 && me.dropCooldown <= 0f) dropMine = true
+            if (dist < 120f && me.grenades > 0 && me.throwCooldown <= 0f) throwGrenade = true
             val desired = atan2(dy, dx)
             val facingDiff = Math.abs(angleDelta(me.turretDir, desired))
             if (dist < 470f &&
@@ -118,6 +118,6 @@ class BotController(private val slot: Int, private val rng: Rng) {
                 fire = true
             }
         }
-        return TankInput(mx, my, aimX, aimY, fire, lights = true, dropMine = dropMine)
+        return TankInput(mx, my, aimX, aimY, fire, lights = true, throwGrenade = throwGrenade)
     }
 }

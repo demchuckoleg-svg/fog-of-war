@@ -63,6 +63,7 @@ class HostRound(
     private suspend fun loop() {
         var next = System.nanoTime()
         val tickNanos = 1_000_000_000L / GameConfig.TICK_HZ
+        val snapshotEvery = (GameConfig.TICK_HZ / GameConfig.SNAPSHOT_HZ).coerceAtLeast(1)
         while (!finished) {
             val now = System.nanoTime()
             if (now < next) {
@@ -96,8 +97,8 @@ class HostRound(
 
             frame = buildFrame()
 
-            // 30 ticks/s simulation, ~15 snapshots/s: plenty for smooth interpolation.
-            if (tick % 2L == 0L) {
+            // 30 ticks/s simulation, SNAPSHOT_HZ snapshots/s: plenty for smooth interpolation.
+            if (tick % snapshotEvery == 0L) {
                 val snapshot = Snapshot(
                     tick = tick,
                     tanks = world.tanks.map {
@@ -109,15 +110,15 @@ class HostRound(
                             turretDir = it.turretDir,
                             hp = it.hp,
                             flags = it.flagBits(),
-                            mines = it.mines,
+                            grenades = it.grenades,
                             cooldown = it.cooldownFraction(),
-                            mineRecharge = (it.mineRecharge / GameConfig.MINE_RECHARGE_TIME)
+                            grenadeRecharge = (it.grenadeRecharge / GameConfig.GRENADE_RECHARGE_TIME)
                                 .coerceIn(0f, 1f),
                         )
                     },
                     bullets = world.bullets.map { BulletSnap(it.x, it.y) },
                     pickups = world.pickups.map { PickupSnap(it.type, it.x, it.y) },
-                    mines = world.mines.map { MineSnap(it.x, it.y, it.armed, it.owner) },
+                    grenades = world.grenades.map { GrenadeSnap(it.x, it.y, it.landed, it.owner) },
                     zoneRadius = world.zoneRadius,
                     sonarRadius = world.sonarRadius,
                     sonarActive = world.sonarActive,
@@ -167,9 +168,9 @@ class HostRound(
                 invulnerable = tank.invuln > 0f,
                 powered = tank.powerTime > 0f,
                 lightBoost = tank.lightTime > 0f,
-                mines = tank.mines,
+                grenades = tank.grenades,
                 cooldown = tank.cooldownFraction(),
-                mineRecharge = (tank.mineRecharge / GameConfig.MINE_RECHARGE_TIME)
+                grenadeRecharge = (tank.grenadeRecharge / GameConfig.GRENADE_RECHARGE_TIME)
                     .coerceIn(0f, 1f),
             )
         }
@@ -181,7 +182,7 @@ class HostRound(
             tanks = tanks,
             bullets = world.bullets.map { BulletSnap(it.x, it.y) },
             pickups = world.pickups.map { PickupSnap(it.type, it.x, it.y) },
-            mines = world.mines.map { MineSnap(it.x, it.y, it.armed, it.owner) },
+            grenades = world.grenades.map { GrenadeSnap(it.x, it.y, it.landed, it.owner) },
             zoneRadius = world.zoneRadius,
             sonarRadius = world.sonarRadius,
             sonarActive = world.sonarActive,
@@ -193,7 +194,7 @@ class HostRound(
     }
 
     private companion object {
-        /** Reliable payloads stay small; a long mine chain is split into several messages. */
+        /** Reliable payloads stay small; a long grenade chain is split into several messages. */
         const val TILE_SYNC_CHUNK = 200
     }
 }
