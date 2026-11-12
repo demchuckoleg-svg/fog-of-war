@@ -1,102 +1,37 @@
-# Fog of War — план разработки
+# AGENTS.md — Fog of War
 
-Многопользовательская Android-игра: танки в тумане войны, 1–6 игроков по локальной сети
-через **Google Play Services Nearby Connections**. Управление: два стика (движение + башня),
-кнопки огня и мины. Виден только луч фары перед танком; раз в несколько секунд из центра
-карты идёт сонар, подсвечивающий врагов красными точками. 3 HP, сужающаяся зона, 4 большие
-карты, побеждает последний выживший.
+Multiplayer Android top-down tank game (1–6 players via Google Play Services Nearby Connections, `Strategy.P2P_STAR`). Host-authoritative (30 TPS sim, 15 Hz snapshots, ~95 ms client interpolation).
 
----
+## Tech Stack & Build
+- **Language / SDK:** Kotlin 1.9.24, AGP 8.5.2, compileSdk 34, minSdk 26, JDK 17.
+- **UI & Render:** Android Views + XML, custom `SurfaceView` + `Canvas` (no external game engines).
+- **Network:** Nearby Connections (`...nearby.v4`), binary `ByteBuffer` protocol v4.
+- **Environment:** No local Android SDK. CI (GitHub Actions) runs unit tests and builds signed release APK (`versionCode = 1000 + GITHUB_RUN_NUMBER`) on every push.
+- **Verification commands:**
+  - Local JVM tests (for `core/`): `./gradlew test`
+  - Check CI build after push: `gh run watch`
 
-## 1. Технологический стек
+## Architecture & Modules
+- `core/` — **Pure Kotlin game simulation (NO Android dependencies).**
+  - Deterministic 64×64 map generation by `(mapId, GameConfig.MAP_SEED)` (4 maps, no consecutive repeats).
+  - Tiles: `EMPTY`, `BRICK` (2 HP), `CRACKED`, `STEEL`, `WATER`.
+  - AABB physics, tank push-apart, bullets, shrinking zone, sonar (~4 s pulse), AI bots (4 in solo), mines (2 charges, 8 s recharge, 0.7 s arm, R=64 AoE), pickups (`REPAIR`, `POWER`, `LIGHT`), `EffectEvent` queue.
+- `net/` — **Networking & persistent session state.**
+  - `NearbyNet`: `Application`-scoped singleton surviving `LOBBY` → `IN_GAME` → `ROUND_OVER` → `LOBBY`.
+  - `RoomsActivity`: foreground-only discovery; host advertises `RoomDescriptor` (`nick|mapId|players|L/G|code`, **strictly ≤ 64 bytes UTF-8**) with ~1.5 s debounce.
+  - Reliable `TileSync` in 200-tile chunks, `Short` snapshot counters, `Hello`/`Welcome` version check, 2.5 s client snapshot watchdog.
+- `render/` — **Camera, Fog of War & procedural pixel-art.**
+  - Camera ~14 tiles high; FoW via `Path.Op.DIFFERENCE` + grid DDA raycast (`TileMap.raycastLight`).
+  - Headlight cone follows **turret** (`turretDir`), not body; stationary tank with headlight off is invisible to sonar; shooting emits orange sound rings visible to all.
+  - `SpriteAtlas.kt`: 16×16 ASCII grids → nearest-neighbour `Bitmap` with per-slot tank coloring.
+  - `Effects.kt`: tracks, muzzle flash, sparks, smoke, explosions, sound rings, camera shake, barrel recoil.
+  - `MapPreviewView`: lobby map preview using the same deterministic generator.
+- `ui/` / Input — Twin-stick controls: left stick = body movement (`moveX/Y`), right stick = Brawl Stars aim (tap = auto-aim nearest LoS enemy, drag & release = manual fire), plus `MINE` and `LIGHT` toggle buttons.
 
-* **Язык:** Kotlin. UI — View + XML, рендер — `SurfaceView` + `Canvas` (без движков).
-* **Сеть:** Nearby Connections, `Strategy.P2P_STAR` (хост + до 5 клиентов).
-* **Протокол:** бинарный `ByteBuffer`, версия 4 (service id `...nearby.v4`).
-* **Сборка:** AGP 8.5.2, Kotlin 1.9.24, compileSdk 34, minSdk 26, JDK 17.
-* **CI:** GitHub Actions собирает подписанный APK на каждый пуш, публикует `latest`-релиз.
-
-## 2. Модули
-
-### 2.1 Сеть и постоянное лобби (`net/`)
-* `NearbyNet` — синглтон в `Application`, соединение переживает переходы меню ↔ лобби ↔ игра.
-* Состояния: `LOBBY` → `IN_GAME` → `ROUND_OVER` → `LOBBY` по тем же endpoint'ам.
-* Экран «Комнаты рядом» (`RoomsActivity`): список найденных комнат, статус поиска, обновление,
-  пустое состояние; discovery живёт только пока экран на переднем плане.
-* До подключения Nearby отдаёт только имя endpoint'а, поэтому хост рекламирует компактный
-  дескриптор `RoomDescriptor` (`ник|mapId|игроки|L/G|код`, ≤64 байт UTF-8) и перезапускает
-  advertising с дебаунсом ~1.5 с при смене состава/карты/ника. Полные данные — после входа.
-* Никнеймы, счёт побед, выбор первой карты хостом, до 6 игроков; в одиночной игре — 4 бота.
-* Каждый следующий раунд играется на другой карте (без повтора подряд); клиенты получают
-  `mapId` в `StartRound` и генерируют её детерминированно.
-* Хост авторитетен: симуляция 30 TPS, снапшоты 15 Гц, клиент интерполирует ~95 мс назад.
-* Версия протокола передаётся в `Hello`/`Welcome`; несовпадение — понятное сообщение и отключение.
-  Изменения карты идут отдельным надёжным сообщением `TileSync` порциями по 200, счётчики
-  снапшота — `Short`; сбой одного сообщения не теряет карту.
-* Клиентский watchdog: если снапшоты не приходят 2.5 с, клиент выходит с сообщением о потере связи.
-
-### 2.2 Ядро (`core/`, без Android API)
-* 4 карты 64×64, детерминированная генерация по `(mapId, seed)`; сид фиксирован
-  (`GameConfig.MAP_SEED`), чтобы превью карты в лобби совпадало с реальной ареной.
-* Тайлы: `EMPTY`, `BRICK` (2 попадания), `CRACKED`, `STEEL`, `WATER`.
-* Физика AABB, расталкивание танков, пули, урон, зона, сонар, боты, мины, пикапы, эффект-события.
-* Тесты JVM: генерация, коллизии, урон, зона, сонар, боты, протокол, интерполяция.
-
-### 2.3 Туман войны, свет и сонар (`render/`)
-* Камера за танком, ~14 тайлов по высоте.
-* Туман: экранный путь минус конус фары (`Path.Op.DIFFERENCE`), без полноэкранного слоя;
-  raycast по сетке (DDA, `TileMap.raycastLight`) вместо шагов по расстоянию.
-* Луч фары следует за **башней**, а не за корпусом; усиленный прожектор — пикап «свет».
-* Чужие включённые фары видны в темноте как слабые конусы — стелс-механика.
-* Сонар: кольцо из центра каждые ~4 с; красные блипы врагов. Танк с выключенной фарой,
-  который стоит на месте, сонар **не подсвечивает**.
-* Мини-карта сверху: стены/вода, собственная позиция, рамка камеры, волна сонара и
-  последние известные позиции врагов (сонар + затухающие маркеры после попадания в фару).
-* Выстрел в темноте даёт оранжевое «звуковое эхо» (видно всем) — выдаёт стрелка.
-
-### 2.4 Управление: twin-stick + независимая башня
-* **Левый стик** — движение корпуса (корпус плавно доворачивается по направлению стика).
-* **Правый стик (Brawl Stars):** тап — выстрел в сторону ближайшего врага с линией видимости
-  (если врага нет — в случайную сторону); перетаскивание — прицеливание, отпускание — выстрел.
-* Отдельной кнопки огня нет; башня поворачивается медленно, но выстрел всегда идёт точно по прицелу
-  (мгновенный снап на сервере + локальное визуальное подтверждение).
-* **Кнопка «МИНА»** — 2 заряда, заряд восстанавливается за 8 с; мина ставится позади и взрывается от врага/пули.
-* **Кнопка «ФАРА»** — выключить/включить прожектор (стелс; сонар не видит неподвижного).
-* Сеть передаёт `moveX/moveY`, `aimX/aimY`, `fire`, `lights`, `dropMine`; корпус и башня
-  интерполируются раздельно (`bodyDir`, `turretDir`).
-
-### 2.5 Пикапы
-* На старте 3 ящика, далее до 4 штук каждые ~18 с в свободных местах карты.
-* `REPAIR` +1 HP (максимум 3), `POWER` 10 с: скорострельность и пробитие кирпича с 1 удара,
-  `LIGHT` 12 с: длиннее и шире луч фары.
-* Ящики и мины входят в снапшот; события подбора дают искры на всех экранах.
-
-### 2.6 Мины
-* 2 заряда, заряд восстанавливается за 8 с, кулдаун постановки 0.5 с, взвод через 0.7 с.
-* Взрыв: 1 HP всем врагам в радиусе 64 (владелец не страдает), разрушает кирпич в радиусе,
-  цепная детонация мин.
-* Взрыв виден в тумане, даёт вспышку и тряску камеры.
-
-### 2.7 Графика: pixel-art атлас и juice
-* `SpriteAtlas.kt`: 16×16 ASCII-сетки → `Bitmap`, nearest-neighbour, цвет корпуса/башни
-  подставляется под слот игрока. Спрайты: корпус (2 кадра гусениц), башня, кирпич,
-  треснувший кирпич, сталь, вода (2 кадра), земля (4 варианта), пикапы, мина, взрыв (3 кадра).
-* 2.5D-тени стен (смещённый тёмный прямоугольник) и текстурированный пол.
-* `Effects.kt`: следы гусениц, дульное пламя, искры, дым, взрывы, «звуковые» кольца выстрелов,
-  вспышки подбора; тряска камеры; отдача ствола и мигание при неуязвимости.
-* Мягкий градиент света поверх вырезанного конуса + блики на стенах в точках попадания луча.
-* `MapPreviewView` — превью выбранной карты (стены, вода, точки спавна) прямо в лобби.
-
-### 2.8 CI/CD
-* `keystore/release.p12` (PKCS12) — единая подпись; `versionCode = 1000 + GITHUB_RUN_NUMBER`.
-* Workflow: unit-тесты → `assembleRelease` → artifact → rolling release `latest` (+ релизы по тегам).
-
-## 3. Правила для агентов
-
-* `core/` не зависит от Android API — на нём держатся JVM-тесты.
-* Сетевые сообщения меняются только вместе с обеими сторонами (Host и Client) и с bump
-  `SERVICE_ID`/`VERSION` при несовместимом изменении.
-* Не повышать `versionCode` вручную — им управляет CI.
-* Новые спрайты — только через `SpriteAtlas` (ASCII 16×16), без бинарных PNG.
-* Новые эффекты — только через `Effects`; события геймплея идут через `EffectEvent`.
-* Проверка сборки: `gh run watch` после `git push` (локально Android SDK нет).
+## Hard Rules for Agents
+1. **Keep `core/` pure:** Never import `android.*` inside `core/`. All simulation logic must remain runnable via JVM unit tests.
+2. **Protocol compatibility:** Any change to binary network packets must update both Host and Client in the same commit. Bump `SERVICE_ID` and protocol `VERSION` on breaking changes.
+3. **Do not touch `versionCode`:** Never increment `versionCode` manually in Gradle files; CI manages it.
+4. **No binary image assets:** Add new sprites strictly as 16×16 ASCII grids in `SpriteAtlas.kt`.
+5. **Decoupled VFX:** Trigger gameplay effects from `core/` via `EffectEvent` and render them strictly inside `Effects.kt`.
+6. **Descriptor size limit:** Keep `RoomDescriptor` payload ≤ 64 bytes UTF-8.
