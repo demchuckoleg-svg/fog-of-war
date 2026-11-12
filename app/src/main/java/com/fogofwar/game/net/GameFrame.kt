@@ -15,6 +15,7 @@ data class TankSnap(
     val flags: Int,
     val mines: Int,
     val cooldown: Float,
+    val mineRecharge: Float = 0f,
 ) {
     val alive: Boolean get() = flags and GameConfig.FLAG_ALIVE != 0
     val lightsOn: Boolean get() = flags and GameConfig.FLAG_LIGHTS != 0
@@ -60,6 +61,7 @@ data class RenderTank(
     val lightBoost: Boolean,
     val mines: Int,
     val cooldown: Float,
+    val mineRecharge: Float,
 )
 
 /** Immutable view of the world that the renderer consumes once per frame. */

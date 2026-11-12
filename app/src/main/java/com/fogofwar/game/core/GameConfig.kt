@@ -66,6 +66,8 @@ object GameConfig {
 
     /** Mines. */
     const val MINE_CHARGES = 2
+    /** Seconds to regenerate one spent mine charge. */
+    const val MINE_RECHARGE_TIME = 8f
     const val MINE_DROP_COOLDOWN = 0.5f
     const val MINE_ARM_TIME = 0.7f
     const val MINE_TRIGGER_RADIUS = 24f

@@ -99,6 +99,8 @@ class HostRound(
                             flags = it.flagBits(),
                             mines = it.mines,
                             cooldown = it.cooldownFraction(),
+                            mineRecharge = (it.mineRecharge / GameConfig.MINE_RECHARGE_TIME)
+                                .coerceIn(0f, 1f),
                         )
                     },
                     bullets = world.bullets.map { BulletSnap(it.x, it.y) },
@@ -156,6 +158,8 @@ class HostRound(
                 lightBoost = tank.lightTime > 0f,
                 mines = tank.mines,
                 cooldown = tank.cooldownFraction(),
+                mineRecharge = (tank.mineRecharge / GameConfig.MINE_RECHARGE_TIME)
+                    .coerceIn(0f, 1f),
             )
         }
         return GameFrame(

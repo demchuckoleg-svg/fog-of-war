@@ -131,6 +131,34 @@ class GameWorldTest {
     }
 
     @Test
+    fun tanksArePushedApart() {
+        val world = GameWorld(MapGenerator.generate(0, 51L), 0, 51L)
+        val a = world.addPlayer(0, "a")
+        val b = world.addPlayer(1, "b")
+        a.x = 1024f
+        a.y = 1024f
+        b.x = 1036f
+        b.y = 1024f
+        world.step(GameConfig.TICK_DT)
+        assertTrue(
+            "tanks still overlap",
+            hypot(b.x - a.x, b.y - a.y) >= GameConfig.TANK_HALF * 2f - 1f,
+        )
+    }
+
+    @Test
+    fun mineChargesRechargeOverTime() {
+        val world = GameWorld(MapGenerator.generate(1, 52L), 1, 52L)
+        val tank = world.addPlayer(0, "miner")
+        world.addPlayer(1, "other")
+        tank.mines = 0
+        repeat((GameConfig.MINE_RECHARGE_TIME * GameConfig.TICK_HZ).toInt() + 2) {
+            world.step(GameConfig.TICK_DT)
+        }
+        assertTrue("mine did not recharge", tank.mines >= 1)
+    }
+
+    @Test
     fun disconnectLeavesSurvivorAsWinner() {
         val world = GameWorld(MapGenerator.generate(3, 31L), 3, 31L)
         world.addPlayer(0, "survivor")

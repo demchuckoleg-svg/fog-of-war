@@ -66,6 +66,8 @@ class Tank(
 
     var mines: Int = GameConfig.MINE_CHARGES
     var dropCooldown: Float = 0f
+    /** Seconds accumulated toward the next mine charge while below max. */
+    var mineRecharge: Float = 0f
 
     val isPowered: Boolean get() = powerTime > 0f
     val hasLightBoost: Boolean get() = lightTime > 0f

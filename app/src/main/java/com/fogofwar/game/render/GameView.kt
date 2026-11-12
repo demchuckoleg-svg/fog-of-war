@@ -106,7 +106,6 @@ class GameView @JvmOverloads constructor(
     @Volatile private var moveY = 0f
     @Volatile private var aimX = 0f
     @Volatile private var aimY = 0f
-    @Volatile private var firing = false
     @Volatile private var lightsOn = true
     @Volatile private var dropMineRequest = false
 
@@ -125,14 +124,12 @@ class GameView @JvmOverloads constructor(
 
     private var movePointerId = -1
     private var aimPointerId = -1
-    private var firePointerId = -1
     private var minePointerId = -1
 
     private var moveRadius = 0f
     private var moveKnobRadius = 0f
     private var aimRadius = 0f
     private var aimKnobRadius = 0f
-    private var fireRadius = 0f
     private var mineRadius = 0f
     private var lightRadius = 0f
 
@@ -227,7 +224,7 @@ class GameView @JvmOverloads constructor(
                     val dropRequested = dropMineRequest
                     net.sendInput(
                         moveX, moveY, aimX, aimY,
-                        fire = firing || aimAtEdge,
+                        fire = aimAtEdge,
                         lights = lightsOn,
                         dropMine = dropRequested,
                     )
@@ -270,10 +267,8 @@ class GameView @JvmOverloads constructor(
         return true
     }
 
-    private fun fireButtonX() = width - safeRight - 92f * density
-    private fun fireButtonY() = height - safeBottom - 92f * density
-    private fun mineButtonX() = fireButtonX()
-    private fun mineButtonY() = fireButtonY() - 120f * density
+    private fun mineButtonX() = width - safeRight - 92f * density
+    private fun mineButtonY() = height - safeBottom - 92f * density
     private fun lightButtonX() = width - safeRight - 46f * density
     private fun lightButtonY() = safeTop + 86f * density
 
@@ -286,22 +281,14 @@ class GameView @JvmOverloads constructor(
             lightsOn = !lightsOn
             return
         }
-        if (hypot(x - fireButtonX(), y - fireButtonY()) <= fireRadius && firePointerId == -1) {
-            firePointerId = id
-            firing = true
-            return
-        }
         if (hypot(x - mineButtonX(), y - mineButtonY()) <= mineRadius && minePointerId == -1) {
             minePointerId = id
             dropMineRequest = true
             return
         }
 
-        // A second finger landing on an already-held fire/mine button must not become the aim stick.
-        if (x >= width / 2f) {
-            if (hypot(x - fireButtonX(), y - fireButtonY()) <= fireRadius) return
-            if (hypot(x - mineButtonX(), y - mineButtonY()) <= mineRadius) return
-        }
+        // A second finger landing on the already-held mine button must not become the aim stick.
+        if (x >= width / 2f && hypot(x - mineButtonX(), y - mineButtonY()) <= mineRadius) return
 
         if (x < width / 2f && movePointerId == -1) {
             movePointerId = id
@@ -394,17 +381,12 @@ class GameView @JvmOverloads constructor(
             aimX = 0f
             aimY = 0f
         }
-        if (id == firePointerId) {
-            firePointerId = -1
-            firing = false
-        }
         if (id == minePointerId) minePointerId = -1
     }
 
     private fun resetInput() {
         movePointerId = -1
         aimPointerId = -1
-        firePointerId = -1
         minePointerId = -1
         moveActive = false
         aimActive = false
@@ -413,7 +395,6 @@ class GameView @JvmOverloads constructor(
         moveY = 0f
         aimX = 0f
         aimY = 0f
-        firing = false
         dropMineRequest = false
     }
 
@@ -423,7 +404,6 @@ class GameView @JvmOverloads constructor(
         moveKnobRadius = 24f * density
         aimRadius = 50f * density
         aimKnobRadius = 21f * density
-        fireRadius = 58f * density
         mineRadius = 36f * density
         lightRadius = 24f * density
         moveBaseX = 104f * density
@@ -942,25 +922,6 @@ class GameView @JvmOverloads constructor(
             canvas.drawCircle(aimBaseXDraw, aimBaseYDraw, aimRadius, strokePaint)
         }
 
-        // Fire button with reload arc.
-        val fx = fireButtonX()
-        val fy = fireButtonY()
-        hudPaint.color = if (firing) 0x99FF5252.toInt() else 0x33FF5252
-        canvas.drawCircle(fx, fy, fireRadius, hudPaint)
-        strokePaint.color = if (firing) 0xFFFF8080.toInt() else 0x66FF8080
-        strokePaint.strokeWidth = 2.5f * density
-        canvas.drawCircle(fx, fy, fireRadius, strokePaint)
-        hudPaint.color = if (firing) 0xFFFFFFFF.toInt() else 0xB3FFFFFF.toInt()
-        canvas.drawCircle(fx, fy, fireRadius * 0.42f, hudPaint)
-
-        val cd = me?.cooldown ?: 0f
-        if (cd > 0.01f) {
-            arcPaint.strokeWidth = 5f * density
-            arcPaint.color = 0xAAFFD75E.toInt()
-            arcRect.set(fx - fireRadius - 9f * density, fy - fireRadius - 9f * density, fx + fireRadius + 9f * density, fy + fireRadius + 9f * density)
-            canvas.drawArc(arcRect, -90f, 360f * (1f - cd), false, arcPaint)
-        }
-
         // Mine button.
         val mx = mineButtonX()
         val my = mineButtonY()
@@ -971,6 +932,16 @@ class GameView @JvmOverloads constructor(
         canvas.drawCircle(mx, my, mineRadius, strokePaint)
         spriteRect.set(mx - 18f * density, my - 18f * density, mx + 18f * density, my + 18f * density)
         canvas.drawBitmap(SpriteAtlas.mine(true), null, spriteRect, spritePaint)
+        val minesLeft = me?.mines ?: 0
+        if (me != null && minesLeft < GameConfig.MINE_CHARGES) {
+            arcPaint.strokeWidth = 4f * density
+            arcPaint.color = 0xAA57D68B.toInt()
+            arcRect.set(
+                mx - mineRadius - 8f * density, my - mineRadius - 8f * density,
+                mx + mineRadius + 8f * density, my + mineRadius + 8f * density,
+            )
+            canvas.drawArc(arcRect, -90f, 360f * me.mineRecharge, false, arcPaint)
+        }
         textPaint.textAlign = Paint.Align.CENTER
         textPaint.textSize = 12f * scaledDensity
         textPaint.color = if ((me?.mines ?: 0) > 0) COLOR_TEXT else 0x55FFFFFF
@@ -1043,7 +1014,7 @@ class GameView @JvmOverloads constructor(
             textPaint.textSize = 12.5f * scaledDensity
             textPaint.color = ((alpha * 200).toInt() shl 24) or 0x00E6ECE9
             canvas.drawText(
-                "левый стик — езда · правый — башня, до края — огонь · лампочка — фара",
+                "левый стик — езда · правый — башня, до края — огонь · мина и лампочка — справа",
                 w / 2f, safeTop + 92f * density, textPaint,
             )
         }

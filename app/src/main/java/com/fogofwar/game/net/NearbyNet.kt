@@ -39,7 +39,7 @@ class NearbyNet(context: Context) {
 
     companion object {
         private const val TAG = "NearbyNet"
-        const val SERVICE_ID = "com.fogofwar.game.nearby.v2"
+        const val SERVICE_ID = "com.fogofwar.game.nearby.v3"
     }
 
     private val client: ConnectionsClient? = try {

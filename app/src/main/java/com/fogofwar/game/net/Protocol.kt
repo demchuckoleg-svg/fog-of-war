@@ -54,7 +54,7 @@ sealed class NetMessage {
 
 /** Binary wire protocol. Bump VERSION + SERVICE_ID when the format changes. */
 object Protocol {
-    const val VERSION = 2
+    const val VERSION = 3
 
     private const val MSG_HELLO = 1
     private const val MSG_WELCOME = 2
@@ -131,7 +131,7 @@ object Protocol {
 
     fun snapshot(snapshot: Snapshot): ByteArray {
         val size = 160 +
-            snapshot.tanks.size * 32 +
+            snapshot.tanks.size * 33 +
             snapshot.bullets.size * 10 +
             snapshot.pickups.size * 12 +
             snapshot.mines.size * 12 +
@@ -152,6 +152,7 @@ object Protocol {
             b.put(t.flags.toByte())
             b.put(t.mines.toByte())
             b.put((t.cooldown.coerceIn(0f, 1f) * 255f).toInt().toByte())
+            b.put((t.mineRecharge.coerceIn(0f, 1f) * 255f).toInt().toByte())
         }
 
         b.put(snapshot.bullets.size.toByte())
@@ -286,6 +287,7 @@ object Protocol {
                     flags = b.get().toInt() and 0xFF,
                     mines = b.get().toInt() and 0xFF,
                     cooldown = (b.get().toInt() and 0xFF) / 255f,
+                    mineRecharge = (b.get().toInt() and 0xFF) / 255f,
                 )
             )
         }

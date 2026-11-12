@@ -70,6 +70,7 @@ class ClientRound(
                 lightBoost = tb.lightBoost,
                 mines = tb.mines,
                 cooldown = tb.cooldown,
+                mineRecharge = tb.mineRecharge,
             )
         }
 

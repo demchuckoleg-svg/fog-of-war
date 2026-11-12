@@ -138,6 +138,7 @@ class GameWorld(
             val input = if (stale) TankInput(lights = raw.lights) else raw
             updateTank(tank, input, dt)
         }
+        resolveTankCollisions()
         updateBullets(dt)
         updateMines(dt)
         updatePickups(dt)
@@ -180,6 +181,16 @@ class GameWorld(
         // Sonar stealth and tread animation use real displacement, not a stick held against a wall.
         tank.moving = hypot(tank.x - startX, tank.y - startY) > 0.5f
 
+        if (tank.mines < GameConfig.MINE_CHARGES) {
+            tank.mineRecharge += dt
+            if (tank.mineRecharge >= GameConfig.MINE_RECHARGE_TIME) {
+                tank.mineRecharge = 0f
+                tank.mines = (tank.mines + 1).coerceAtMost(GameConfig.MINE_CHARGES)
+            }
+        } else {
+            tank.mineRecharge = 0f
+        }
+
         // Hull-independent turret: aim stick wins, otherwise lazily recenters while driving.
         if (move.hasAim) {
             // Less sensitive near the centre: small deflections turn the turret slowly.
@@ -202,6 +213,56 @@ class GameWorld(
         if (dropEdge && tank.mines > 0 && tank.dropCooldown <= 0f) {
             dropMine(tank)
         }
+    }
+
+    /** Keeps tanks physically apart so they cannot sit inside each other. */
+    private fun resolveTankCollisions() {
+        val minDist = GameConfig.TANK_HALF * 2f
+        repeat(2) {
+            for (i in tanks.indices) {
+                val a = tanks[i]
+                if (!a.alive) continue
+                for (j in i + 1 until tanks.size) {
+                    val b = tanks[j]
+                    if (!b.alive) continue
+                    var dx = b.x - a.x
+                    var dy = b.y - a.y
+                    var dist = hypot(dx, dy)
+                    if (dist >= minDist) continue
+                    if (dist < 0.01f) {
+                        dx = 1f
+                        dy = 0f
+                        dist = 1f
+                    }
+                    val ux = dx / dist
+                    val uy = dy / dist
+                    val half = (minDist - dist) * 0.5f
+                    val movedA = pushTank(a, -ux * half, -uy * half)
+                    val movedB = pushTank(b, ux * half, uy * half)
+                    if (movedA && !movedB) pushTank(a, -ux * half, -uy * half)
+                    if (!movedA && movedB) pushTank(b, ux * half, uy * half)
+                }
+            }
+        }
+    }
+
+    private fun pushTank(tank: Tank, dx: Float, dy: Float): Boolean {
+        var moved = false
+        if (dx != 0f) {
+            val nx = tank.x + dx
+            if (map.isFreeForTankBox(nx, tank.y, GameConfig.TANK_HALF)) {
+                tank.x = nx
+                moved = true
+            }
+        }
+        if (dy != 0f) {
+            val ny = tank.y + dy
+            if (map.isFreeForTankBox(tank.x, ny, GameConfig.TANK_HALF)) {
+                tank.y = ny
+                moved = true
+            }
+        }
+        return moved
     }
 
     private fun fire(tank: Tank) {
