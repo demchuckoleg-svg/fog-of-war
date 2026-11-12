@@ -4,7 +4,6 @@
     <string name="nickname_hint">Никнейм</string>
     <string name="create_room">Создать комнату</string>
     <string name="join_room">Найти игру</string>
-    <string name="stop_search">Остановить поиск</string>
     <string name="start_game">Начать бой</string>
     <string name="leave_room">Выйти из комнаты</string>
     <string name="lobby">Лобби</string>
@@ -21,4 +20,22 @@
     <string name="host_prefix">Хост: </string>
     <string name="solo_hint">Играете один — добавятся боты</string>
     <string name="wins">Побед: %1$d</string>
+
+    <string name="rooms_title">Комнаты рядом</string>
+    <string name="rooms_back">Назад</string>
+    <string name="rooms_refresh">Обновить</string>
+    <string name="rooms_status_searching">Ищем игры рядом…</string>
+    <string name="rooms_status_nobody">Пока никого не нашли. Проверьте Bluetooth и Wi-Fi.</string>
+    <string name="rooms_status_found">Найдено комнат: %1$d</string>
+    <string name="rooms_status_idle">Поиск остановлен</string>
+    <string name="rooms_connecting">Подключаемся к «%1$s»…</string>
+    <string name="rooms_empty_searching">Пока никого не видно</string>
+    <string name="rooms_empty_idle">Поиск не запущен</string>
+    <string name="rooms_empty_hint">Хост должен быть в лобби, а не в бою. Включите Bluetooth и Wi-Fi на всех телефонах и установите одинаковую версию APK.</string>
+    <string name="rooms_map">Карта: %1$s</string>
+    <string name="rooms_players">%1$d/%2$d игроков</string>
+    <string name="rooms_state_lobby">лобби</string>
+    <string name="rooms_state_game">бой</string>
+    <string name="rooms_join">Войти</string>
+    <string name="room_code">Код: %1$s</string>
 </resources>

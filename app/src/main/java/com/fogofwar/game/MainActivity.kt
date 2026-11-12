@@ -19,7 +19,6 @@ import com.fogofwar.game.databinding.ActivityMainBinding
 import com.fogofwar.game.net.LobbyUiState
 import com.fogofwar.game.net.NearbyNet
 import com.fogofwar.game.net.RoomState
-import com.google.android.material.button.MaterialButton
 
 class MainActivity : AppCompatActivity(), NearbyNet.Listener {
 
@@ -29,7 +28,6 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
 
     private var pendingAction: PendingAction = PendingAction.NONE
     private var suppressSpinner = false
-    private var resumeDiscovery = false
     private var lastState: LobbyUiState = LobbyUiState()
 
     private enum class PendingAction { NONE, HOST, DISCOVER }
@@ -42,7 +40,7 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
         if (result.values.all { it }) {
             when (action) {
                 PendingAction.HOST -> net.hostRoom()
-                PendingAction.DISCOVER -> net.startDiscovery()
+                PendingAction.DISCOVER -> openRooms()
                 PendingAction.NONE -> Unit
             }
         } else {
@@ -68,11 +66,7 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
             ensurePermissions(PendingAction.HOST)
         }
         binding.discoverButton.setOnClickListener {
-            if (net.roomState == RoomState.DISCOVERING) {
-                net.stopDiscovery()
-            } else {
-                ensurePermissions(PendingAction.DISCOVER)
-            }
+            ensurePermissions(PendingAction.DISCOVER)
         }
         binding.startButton.setOnClickListener { net.startRound() }
         binding.leaveButton.setOnClickListener { net.leaveRoom() }
@@ -98,19 +92,16 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
         render(net.lobbySnapshot())
         if (net.roomState == RoomState.IN_GAME) {
             startActivity(Intent(this, GameActivity::class.java))
-        } else if (resumeDiscovery) {
-            resumeDiscovery = false
-            if (net.roomState == RoomState.IDLE) net.startDiscovery()
         }
     }
 
     override fun onPause() {
         super.onPause()
         net.clearListener(this)
-        if (net.roomState == RoomState.DISCOVERING) {
-            resumeDiscovery = true
-            net.stopDiscovery()
-        }
+    }
+
+    private fun openRooms() {
+        startActivity(Intent(this, RoomsActivity::class.java))
     }
 
     private fun ensurePermissions(action: PendingAction) {
@@ -120,7 +111,7 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
         if (missing.isEmpty()) {
             when (action) {
                 PendingAction.HOST -> net.hostRoom()
-                PendingAction.DISCOVER -> net.startDiscovery()
+                PendingAction.DISCOVER -> openRooms()
                 PendingAction.NONE -> Unit
             }
         } else {
@@ -170,32 +161,12 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
         binding.menuPanel.visibility = if (inLobby) View.GONE else View.VISIBLE
         binding.lobbyPanel.visibility = if (inLobby) View.VISIBLE else View.GONE
 
-        binding.discoverButton.text = getString(
-            if (state.roomState == RoomState.DISCOVERING) R.string.stop_search else R.string.join_room
-        )
-
         binding.statusText.text = state.status ?: when (state.roomState) {
             RoomState.HOSTING -> getString(R.string.status_hosting)
-            RoomState.DISCOVERING -> if (state.hosts.isEmpty()) getString(R.string.status_searching) else ""
+            RoomState.DISCOVERING -> getString(R.string.status_searching)
             RoomState.CONNECTING -> getString(R.string.status_connecting)
             RoomState.IDLE -> getString(R.string.status_idle)
             else -> ""
-        }
-
-        binding.hostsContainer.removeAllViews()
-        for (host in state.hosts) {
-            val button = MaterialButton(this).apply {
-                text = "Подключиться: ${host.name}"
-                textSize = 16f
-                cornerRadius = (12 * resources.displayMetrics.density).toInt()
-                setOnClickListener { net.connectToHost(host.endpointId) }
-            }
-            val params = android.widget.LinearLayout.LayoutParams(
-                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
-                (56 * resources.displayMetrics.density).toInt(),
-            )
-            params.topMargin = (8 * resources.displayMetrics.density).toInt()
-            binding.hostsContainer.addView(button, params)
         }
 
         if (!inLobby) return
@@ -217,6 +188,8 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
         }
 
         binding.roomInfo.text = "${state.players.size}/${com.fogofwar.game.core.GameConfig.MAX_PLAYERS}"
+        binding.roomCodeText.text = getString(R.string.room_code, state.roomCode)
+        binding.roomCodeText.visibility = if (state.roomCode.isBlank()) View.GONE else View.VISIBLE
         binding.mapPreview.displayedMapId = state.mapId
 
         val host = state.isHost

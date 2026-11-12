@@ -40,6 +40,15 @@ class NearbyNet(context: Context) {
     companion object {
         private const val TAG = "NearbyNet"
         const val SERVICE_ID = "com.fogofwar.game.nearby.v3"
+
+        /**
+         * Advertising restarts are the only way to update the room description, so batch
+         * roster/map changes instead of flapping the advertisement on every event.
+         */
+        private const val ADVERTISING_DEBOUNCE_MS = 1_500L
+
+        /** A short advertising restart looks like a lost endpoint; keep the row meanwhile. */
+        private const val ENDPOINT_LOST_GRACE_MS = 3_000L
     }
 
     private val client: ConnectionsClient? = try {
@@ -62,6 +71,8 @@ class NearbyNet(context: Context) {
         private set
     var mapId: Int = 0
         private set
+    var roomCode: String = ""
+        private set
     var listener: Listener? = null
 
     @Volatile
@@ -77,7 +88,8 @@ class NearbyNet(context: Context) {
     private val endpointBySlot = java.util.concurrent.ConcurrentHashMap<Int, String>()
     private val slotByEndpoint = java.util.concurrent.ConcurrentHashMap<String, Int>()
     private val pendingNames = HashMap<String, String>()
-    private val discovered = LinkedHashMap<String, String>()
+    private val discovered = LinkedHashMap<String, HostInfo>()
+    private val lostRemovals = HashMap<String, Runnable>()
     @Volatile
     private var hostEndpoint: String? = null
     private var status: String? = null
@@ -87,6 +99,8 @@ class NearbyNet(context: Context) {
     private var connectToken = 0
     private var discoveryRetries = 0
     private var discoveryRetry: Runnable? = null
+    private var advertisingUpdate: Runnable? = null
+    private var advertisedName: String? = null
     private val effectQueue = java.util.concurrent.ConcurrentLinkedQueue<EffectEvent>()
 
     // ------------------------------------------------------------- public API
@@ -95,7 +109,10 @@ class NearbyNet(context: Context) {
         nickname = name.trim().ifBlank { "Танк" }.take(16)
         humans[0]?.let { humans[0] = it.copy(name = nickname) }
         when {
-            isHost && roomState != RoomState.IDLE -> broadcastRoster()
+            isHost && roomState != RoomState.IDLE -> {
+                broadcastRoster()
+                updateAdvertising()
+            }
             !isHost && roomState == RoomState.LOBBY -> hostEndpoint?.let {
                 sendRaw(it, Protocol.hello(nickname))
             }
@@ -120,10 +137,11 @@ class NearbyNet(context: Context) {
         mySlot = 0
         lastRoundMapId = -1
         roomState = RoomState.HOSTING
+        roomCode = RoomDescriptor.newCode()
         mapId = 0
         status = null
         humans[0] = PlayerInfo(0, nickname)
-        startAdvertising()
+        updateAdvertising(immediate = true)
         notifyLobby()
     }
 
@@ -136,7 +154,7 @@ class NearbyNet(context: Context) {
         isHost = false
         roomState = RoomState.DISCOVERING
         status = null
-        discovered.clear()
+        clearDiscovered()
         discoveryRetries = 0
         launchDiscovery()
         scheduleDiscoveryRetry()
@@ -178,7 +196,7 @@ class NearbyNet(context: Context) {
     fun stopDiscovery() {
         cancelDiscoveryRetry()
         client?.stopDiscovery()
-        discovered.clear()
+        clearDiscovered()
         if (!isHost && roomState == RoomState.DISCOVERING) {
             roomState = RoomState.IDLE
         }
@@ -188,6 +206,7 @@ class NearbyNet(context: Context) {
     fun connectToHost(endpointId: String) {
         if (isHost || client == null) return
         hostEndpoint = endpointId
+        roomCode = discovered[endpointId]?.code.orEmpty()
         roomState = RoomState.CONNECTING
         status = "Подключение…"
         cancelDiscoveryRetry()
@@ -209,11 +228,17 @@ class NearbyNet(context: Context) {
             }
     }
 
+    /** Abort a pending join when the player backs out of the rooms screen. */
+    fun cancelConnect() {
+        if (roomState == RoomState.CONNECTING) resetToIdle()
+    }
+
     fun selectMap(id: Int) {
         if (!isHost) return
         mapId = id.coerceIn(0, MapGenerator.MAP_NAMES.size - 1)
         broadcastRaw(Protocol.mapSelect(mapId))
         broadcastRoster()
+        updateAdvertising()
     }
 
     fun startRound() {
@@ -230,7 +255,9 @@ class NearbyNet(context: Context) {
         roomState = RoomState.IN_GAME
         lastWinner = null
         status = null
+        cancelAdvertisingUpdate()
         client?.stopAdvertising()
+        advertisedName = null
         broadcastRaw(Protocol.startRound(roundMapId, seed, players))
         val round = HostRound(this, roundMapId, seed, players)
         hostRound = round
@@ -334,6 +361,7 @@ class NearbyNet(context: Context) {
             if (!isHost) return@post
             hostRound = null
             client?.stopAdvertising()
+            advertisedName = null
             if (winnerSlot >= 0) {
                 humans[winnerSlot]?.let { humans[winnerSlot] = it.copy(wins = it.wins + 1) }
             }
@@ -342,7 +370,7 @@ class NearbyNet(context: Context) {
             // Pre-pick the next map so the lobby preview shows exactly what will be played.
             mapId = nextRoundMapId()
             broadcastRoster()
-            startAdvertising()
+            updateAdvertising(immediate = true)
             listener?.onRoundEnded(winnerName)
             notifyLobby()
         }
@@ -365,15 +393,67 @@ class NearbyNet(context: Context) {
 
     // --------------------------------------------------------------- internals
 
-    private fun startAdvertising(attempt: Int = 0) {
-        if (roomState == RoomState.IN_GAME || roomState == RoomState.IDLE) return
+    /**
+     * What other phones will see during discovery, or `null` when this room should not be
+     * advertised (not hosting, round in progress, or the lobby is full).
+     */
+    private fun desiredAdvertisingName(): String? {
+        if (!isHost) return null
+        if (roomState != RoomState.HOSTING && roomState != RoomState.LOBBY) return null
+        if (humans.size >= GameConfig.MAX_PLAYERS) return null
+        return RoomDescriptor(
+            name = nickname,
+            mapId = mapId,
+            players = humans.size.coerceAtLeast(1),
+            inGame = false,
+            code = roomCode,
+        ).encode()
+    }
+
+    private fun updateAdvertising(immediate: Boolean = false) {
+        cancelAdvertisingUpdate()
+        if (immediate) {
+            applyAdvertising()
+            return
+        }
+        val runnable = Runnable {
+            advertisingUpdate = null
+            applyAdvertising()
+        }
+        advertisingUpdate = runnable
+        mainHandler.postDelayed(runnable, ADVERTISING_DEBOUNCE_MS)
+    }
+
+    private fun cancelAdvertisingUpdate() {
+        advertisingUpdate?.let(mainHandler::removeCallbacks)
+        advertisingUpdate = null
+    }
+
+    private fun applyAdvertising() {
+        val name = desiredAdvertisingName()
+        if (name == advertisedName) return
+        client?.stopAdvertising()
+        advertisedName = null
+        if (name != null) startAdvertising(name)
+    }
+
+    private fun startAdvertising(name: String, attempt: Int = 0) {
+        if (desiredAdvertisingName() != name) return
         val options = AdvertisingOptions.Builder().setStrategy(Strategy.P2P_STAR).build()
-        client?.startAdvertising(SERVICE_ID, nickname, connectionCallback, options)
+        advertisedName = name
+        client?.startAdvertising(SERVICE_ID, name, connectionCallback, options)
             ?.addOnFailureListener { e ->
+                advertisedName = null
                 if (roomState == RoomState.IN_GAME || roomState == RoomState.IDLE) return@addOnFailureListener
                 if (attempt < 2) {
                     client?.stopAdvertising()
-                    mainHandler.postDelayed({ startAdvertising(attempt + 1) }, 1_200L)
+                    mainHandler.postDelayed({
+                        if (desiredAdvertisingName() != name) {
+                            applyAdvertising()
+                        } else {
+                            startAdvertising(name, attempt + 1)
+                        }
+                    }, 1_200L)
                 } else {
                     if (roomState == RoomState.HOSTING) {
                         roomState = RoomState.IDLE
@@ -382,6 +462,12 @@ class NearbyNet(context: Context) {
                     reportError("Не удалось создать комнату: ${e.message}")
                 }
             }
+    }
+
+    private fun clearDiscovered() {
+        for (removal in lostRemovals.values) mainHandler.removeCallbacks(removal)
+        lostRemovals.clear()
+        discovered.clear()
     }
 
     private fun sendRaw(endpointId: String, bytes: ByteArray) {
@@ -399,23 +485,26 @@ class NearbyNet(context: Context) {
         sessionGeneration++
         connectToken++
         cancelDiscoveryRetry()
+        cancelAdvertisingUpdate()
         isHost = false
         hostEndpoint = null
         hostRound?.stop()
         hostRound = null
         clientRound = null
         client?.stopAdvertising()
+        advertisedName = null
         client?.stopDiscovery()
         client?.stopAllEndpoints()
         humans.clear()
         endpointBySlot.clear()
         slotByEndpoint.clear()
         pendingNames.clear()
-        discovered.clear()
+        clearDiscovered()
         roomState = RoomState.IDLE
         mySlot = 0
         lastRoundMapId = -1
         lastWinner = null
+        roomCode = ""
         status = null
         effectQueue.clear()
         if (notify) notifyLobby()
@@ -436,9 +525,8 @@ class NearbyNet(context: Context) {
         mySlot = mySlot,
         players = humans.values.sortedBy { it.slot },
         mapId = mapId,
-        hosts = discovered.entries
-            .filter { it.key != hostEndpoint }
-            .map { HostInfo(it.key, it.value) },
+        hosts = discovered.values.filter { it.endpointId != hostEndpoint },
+        roomCode = roomCode,
         status = status,
     )
 
@@ -498,8 +586,13 @@ class NearbyNet(context: Context) {
                 humans[slot] = PlayerInfo(slot, pendingNames[endpointId] ?: "Игрок")
                 sendRaw(endpointId, Protocol.welcome(slot))
                 broadcastRoster()
+                updateAdvertising()
             } else {
-                if (endpointId != hostEndpoint) return
+                // A join cancelled from the rooms screen can still complete later.
+                if (endpointId != hostEndpoint) {
+                    c.disconnectFromEndpoint(endpointId)
+                    return
+                }
                 roomState = RoomState.LOBBY
                 status = null
                 sendRaw(endpointId, Protocol.hello(nickname))
@@ -516,6 +609,7 @@ class NearbyNet(context: Context) {
                     humans.remove(slot)
                     hostRound?.world?.requestRemove(slot)
                     broadcastRoster()
+                    updateAdvertising()
                 }
             } else {
                 if (endpointId != hostEndpoint) return
@@ -527,14 +621,25 @@ class NearbyNet(context: Context) {
 
     private val discoveryCallback = object : EndpointDiscoveryCallback() {
         override fun onEndpointFound(endpointId: String, info: DiscoveredEndpointInfo) {
-            discovered[endpointId] = info.endpointName.trim().ifBlank { "Комната" }
+            lostRemovals.remove(endpointId)?.let(mainHandler::removeCallbacks)
+            val host = HostInfo.fromEndpoint(endpointId, info.endpointName)
+            if (discovered[endpointId] == host) return
+            discovered[endpointId] = host
             cancelDiscoveryRetry()
             notifyLobby()
         }
 
         override fun onEndpointLost(endpointId: String) {
-            discovered.remove(endpointId)
-            notifyLobby()
+            if (!discovered.containsKey(endpointId)) return
+            // Updating the advertised descriptor restarts advertising, which can look like
+            // a lost endpoint for a moment. Keep the row for a grace period.
+            lostRemovals.remove(endpointId)?.let(mainHandler::removeCallbacks)
+            val removal = Runnable {
+                lostRemovals.remove(endpointId)
+                if (discovered.remove(endpointId) != null) notifyLobby()
+            }
+            lostRemovals[endpointId] = removal
+            mainHandler.postDelayed(removal, ENDPOINT_LOST_GRACE_MS)
         }
     }
 
@@ -546,6 +651,7 @@ class NearbyNet(context: Context) {
                     val slot = slotByEndpoint[endpointId] ?: return
                     humans[slot] = humans[slot]?.copy(name = message.name) ?: PlayerInfo(slot, message.name)
                     broadcastRoster()
+                    updateAdvertising()
                 }
                 is NetMessage.InputMsg -> {
                     val slot = slotByEndpoint[endpointId] ?: return

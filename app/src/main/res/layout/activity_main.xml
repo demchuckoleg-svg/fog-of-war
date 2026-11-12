@@ -83,13 +83,6 @@
                 android:text="@string/status_idle"
                 android:textColor="@color/text_dim"
                 android:textSize="14sp" />
-
-            <LinearLayout
-                android:id="@+id/hostsContainer"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:orientation="vertical" />
         </LinearLayout>
 
         <LinearLayout
@@ -118,9 +111,19 @@
                     android:textStyle="bold" />
 
                 <TextView
+                    android:id="@+id/roomCodeText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="10dp"
+                    android:textColor="@color/accent"
+                    android:textSize="14sp"
+                    android:visibility="gone" />
+
+                <TextView
                     android:id="@+id/roomInfo"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:layout_marginStart="10dp"
                     android:textColor="@color/text_dim"
                     android:textSize="14sp" />
             </LinearLayout>

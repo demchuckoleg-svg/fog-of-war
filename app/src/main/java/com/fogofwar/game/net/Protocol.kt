@@ -15,7 +15,34 @@ data class PlayerInfo(
     val isBot: Boolean = false,
 )
 
-data class HostInfo(val endpointId: String, val name: String)
+/**
+ * A room found by discovery. [mapId], [players], [inGame] and [code] come from the
+ * advertising endpoint name ([RoomDescriptor]) and are `null`/empty for old hosts that
+ * advertise a plain nickname.
+ */
+data class HostInfo(
+    val endpointId: String,
+    val name: String,
+    val mapId: Int? = null,
+    val players: Int = 0,
+    val inGame: Boolean = false,
+    val code: String = "",
+) {
+    companion object {
+        fun fromEndpoint(endpointId: String, endpointName: String): HostInfo {
+            val raw = endpointName.trim().ifBlank { "Комната" }
+            val descriptor = RoomDescriptor.parse(raw) ?: return HostInfo(endpointId, raw)
+            return HostInfo(
+                endpointId = endpointId,
+                name = descriptor.name,
+                mapId = descriptor.mapId,
+                players = descriptor.players,
+                inGame = descriptor.inGame,
+                code = descriptor.code,
+            )
+        }
+    }
+}
 
 data class LobbyUiState(
     val roomState: RoomState = RoomState.IDLE,
@@ -24,6 +51,7 @@ data class LobbyUiState(
     val players: List<PlayerInfo> = emptyList(),
     val mapId: Int = 0,
     val hosts: List<HostInfo> = emptyList(),
+    val roomCode: String = "",
     val status: String? = null,
 ) {
     val inLobby: Boolean
