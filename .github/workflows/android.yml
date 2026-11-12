@@ -62,7 +62,7 @@ jobs:
           tag_name: latest
           name: Latest build
           body: |
-            Автоматическая сборка из `master`, versionCode ${{ github.run_number }}.
+            Автоматическая сборка из `master`, build #${{ github.run_number }} (versionCode ${{ 1000 + github.run_number }}).
             Прямая ссылка для установки на телефон: этот APK ставится поверх предыдущей версии.
           files: out/fog-of-war-latest.apk
 
