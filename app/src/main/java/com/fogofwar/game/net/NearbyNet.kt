@@ -448,10 +448,15 @@ class NearbyNet(context: Context) {
         if (name == advertisedName) return
         advertisedName = null
         val connection = client ?: return
-        // stopAdvertising is asynchronous: starting in the same turn fails with ALREADY_ADVERTISING.
-        connection.stopAdvertising().addOnCompleteListener {
-            if (name != null && desiredAdvertisingName() == name) startAdvertising(name)
+        // stopAdvertising is asynchronous and returns void; give it a moment before restarting.
+        connection.stopAdvertising()
+        if (name == null) return
+        val restart = Runnable {
+            advertisingUpdate = null
+            if (desiredAdvertisingName() == name) startAdvertising(name)
         }
+        advertisingUpdate = restart
+        mainHandler.postDelayed(restart, 150L)
     }
 
     private fun startAdvertising(name: String, attempt: Int = 0) {

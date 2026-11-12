@@ -131,6 +131,7 @@ class GameView @JvmOverloads constructor(
     private var minimapBitmap: Bitmap? = null
     private var minimapMap: TileMap? = null
     private var minimapTick = -1000L
+    private var minimapPixels: IntArray? = null
     private val minimapPaint = Paint().apply {
         isFilterBitmap = false
         isAntiAlias = false
@@ -703,8 +704,9 @@ class GameView @JvmOverloads constructor(
                 when (tile) {
                     Tile.EMPTY -> {
                         // Sparse detail: the base ground rect already covers the surface.
-                        if (((tx * 31 + ty * 17) and 1) == 0) {
-                            val variant = (tx * 31 + ty * 17) and 3
+                        val hash = tx * 31 + ty * 17
+                        if ((hash and 1) == 0) {
+                            val variant = (hash ushr 1) and 3
                             canvas.drawBitmap(SpriteAtlas.ground(variant), null, spriteRect, spritePaint)
                         }
                     }
@@ -1060,7 +1062,7 @@ class GameView @JvmOverloads constructor(
         val h = canvas.height.toFloat()
         val me = frame.me
         val hudRight = w - safeRight - 20f * density
-        val hudTop = safeTop + 70f * density
+        val hudTop = safeTop + 96f * density
 
         // HP pips, right aligned under the exit button.
         val pipW = 30f * density
@@ -1268,7 +1270,9 @@ class GameView @JvmOverloads constructor(
             minimapTick = -1000L
         }
         if (frame.tick - minimapTick >= 30L) {
-            val pixels = IntArray(map.width * map.height)
+            val pixels = minimapPixels
+                ?.takeIf { it.size == map.width * map.height }
+                ?: IntArray(map.width * map.height).also { minimapPixels = it }
             for (ty in 0 until map.height) {
                 for (tx in 0 until map.width) {
                     pixels[ty * map.width + tx] = when (map.tileAt(tx, ty)) {
