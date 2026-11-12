@@ -481,10 +481,11 @@ class GameView @JvmOverloads constructor(
 
     private fun drawWorld(canvas: Canvas, frame: GameFrame, now: Long) {
         val map = frame.map
-        val left = camera.worldLeft.coerceAtLeast(0f)
-        val top = camera.worldTop.coerceAtLeast(0f)
-        val right = camera.worldRight.coerceAtMost(GameConfig.WORLD_SIZE)
-        val bottom = camera.worldBottom.coerceAtMost(GameConfig.WORLD_SIZE)
+        val margin = GameConfig.TILE
+        val left = (camera.worldLeft - margin).coerceAtLeast(0f)
+        val top = (camera.worldTop - margin).coerceAtLeast(0f)
+        val right = (camera.worldRight + margin).coerceAtMost(GameConfig.WORLD_SIZE)
+        val bottom = (camera.worldBottom + margin).coerceAtMost(GameConfig.WORLD_SIZE)
         canvas.drawRect(left, top, right, bottom, groundPaint)
 
         val tx0 = floor(left / GameConfig.TILE).toInt().coerceIn(0, map.width - 1)
@@ -616,10 +617,12 @@ class GameView @JvmOverloads constructor(
     }
 
     private fun drawFog(canvas: Canvas, frame: GameFrame, me: RenderTank?, now: Long) {
-        val left = camera.worldLeft
-        val top = camera.worldTop
-        val right = camera.worldRight
-        val bottom = camera.worldBottom
+        // Extra margin covers camera shake so no unfogged strip appears at the screen edge.
+        val margin = 96f
+        val left = camera.worldLeft - margin
+        val top = camera.worldTop - margin
+        val right = camera.worldRight + margin
+        val bottom = camera.worldBottom + margin
         val layer = canvas.saveLayer(left, top, right, bottom, null)
         canvas.drawRect(left, top, right, bottom, fogPaint)
         if (me != null) {
