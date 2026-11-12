@@ -29,7 +29,7 @@ object SpriteAtlas {
 
     /** Shared palette. '.' is always transparent and is not listed here. */
     private val BASE: Map<Char, Int> = mapOf(
-        'T' to 0xFF2A2E33.toInt(), // tread / dark metal
+        'T' to 0xFF3A4148.toInt(), // tread / dark metal
         'W' to 0xFFEAF2EA.toInt(), // near-white highlight
         'B' to 0xFF8A4A2C.toInt(), // brick base
         'b' to 0xFF5A2E1C.toInt(), // brick dark / mortar

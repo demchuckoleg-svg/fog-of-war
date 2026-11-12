@@ -210,6 +210,7 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
         }
 
         binding.roomInfo.text = "${state.players.size}/${com.fogofwar.game.core.GameConfig.MAX_PLAYERS}"
+        binding.mapPreview.displayedMapId = state.mapId
 
         val host = state.isHost
         binding.mapSpinner.visibility = if (host) View.VISIBLE else View.GONE

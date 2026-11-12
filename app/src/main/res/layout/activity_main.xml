@@ -146,6 +146,13 @@
                 android:text="@string/map"
                 style="@style/SectionText" />
 
+            <com.fogofwar.game.render.MapPreviewView
+                android:id="@+id/mapPreview"
+                android:layout_width="match_parent"
+                android:layout_height="170dp"
+                android:layout_marginTop="8dp"
+                android:background="@color/bg" />
+
             <Spinner
                 android:id="@+id/mapSpinner"
                 android:layout_width="match_parent"
