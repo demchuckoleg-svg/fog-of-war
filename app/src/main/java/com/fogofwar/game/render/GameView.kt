@@ -1,6 +1,7 @@
 package com.fogofwar.game.render
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
@@ -21,6 +22,7 @@ import com.fogofwar.game.core.EffectKind
 import com.fogofwar.game.core.GameConfig
 import com.fogofwar.game.core.Tile
 import com.fogofwar.game.core.TileMap
+import com.fogofwar.game.core.angleDelta
 import com.fogofwar.game.net.GameFrame
 import com.fogofwar.game.net.NearbyNet
 import com.fogofwar.game.net.RenderTank
@@ -29,6 +31,7 @@ import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.hypot
 import kotlin.math.sin
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * SurfaceView renderer: pixel-art world -> effects -> tanks -> raycast headlight fog ->
@@ -101,6 +104,18 @@ class GameView @JvmOverloads constructor(
     private val lastTreadAt = HashMap<Int, Long>()
     private val lastAlive = HashMap<Int, Boolean>()
     private val feed = ArrayList<FeedLine>()
+
+    /** Where enemies were last seen in the headlight, for the fading "last seen" markers. */
+    private data class Seen(val x: Float, val y: Float, val turretDir: Float, val at: Long)
+    private val lastSeen = ConcurrentHashMap<Int, Seen>()
+
+    private var minimapBitmap: Bitmap? = null
+    private var minimapMap: TileMap? = null
+    private var minimapTick = -1000L
+    private val minimapPaint = Paint().apply {
+        isFilterBitmap = false
+        isAntiAlias = false
+    }
 
     // Touch state written by the UI thread and read by the render thread.
     @Volatile private var moveX = 0f
@@ -428,26 +443,97 @@ class GameView @JvmOverloads constructor(
         shotVisualUntil = SystemClock.elapsedRealtime() + 260L
     }
 
-    /** Tap on the aim stick: nearest enemy with a clear line of sight, otherwise a random direction. */
+    /** Tap on the aim stick: nearest visible enemy or last-seen ghost, otherwise a random direction. */
     private fun autoAimAngle(): Float {
         val frame = lastFrame
         val me = frame?.me
-        if (frame != null && me != null) {
+        if (frame != null && me != null && me.alive) {
             var best: RenderTank? = null
             var bestDist = GameConfig.AUTO_AIM_RANGE
             for (tank in frame.tanks) {
                 if (!tank.alive || tank.slot == frame.mySlot) continue
+                if (!isVisibleToMe(frame, me, tank)) continue
                 val dist = hypot(tank.x - me.x, tank.y - me.y)
-                if (dist >= bestDist) continue
-                if (!lineOfSight(frame.map, me.x, me.y, tank.x, tank.y)) continue
-                best = tank
-                bestDist = dist
+                if (dist < bestDist) {
+                    best = tank
+                    bestDist = dist
+                }
             }
             if (best != null) {
                 return kotlin.math.atan2(best.y - me.y, best.x - me.x)
             }
+
+            val now = SystemClock.elapsedRealtime()
+            var ghostX = 0f
+            var ghostY = 0f
+            var ghostDist = GameConfig.AUTO_AIM_RANGE
+            for (seen in lastSeen.values) {
+                if (now - seen.at > GHOST_MS) continue
+                val dist = hypot(seen.x - me.x, seen.y - me.y)
+                if (dist < ghostDist) {
+                    ghostDist = dist
+                    ghostX = seen.x
+                    ghostY = seen.y
+                }
+            }
+            if (ghostDist < GameConfig.AUTO_AIM_RANGE) {
+                return kotlin.math.atan2(ghostY - me.y, ghostX - me.x)
+            }
         }
         return (Math.random() * Math.PI * 2.0).toFloat()
+    }
+
+    /** True while an enemy is inside the local headlight cone (or hugging the tank). */
+    private fun isVisibleToMe(frame: GameFrame, me: RenderTank, enemy: RenderTank): Boolean {
+        if (!me.alive || !enemy.alive) return false
+        val dx = enemy.x - me.x
+        val dy = enemy.y - me.y
+        val dist = hypot(dx, dy)
+        if (dist <= GameConfig.LIGHT_SELF_RADIUS) return true
+        if (!me.lightsOn) return false
+        if (dist > ownLightRange(me)) return false
+        if (Math.abs(angleDelta(me.turretDir, kotlin.math.atan2(dy, dx))) > ownLightHalfAngle(me)) {
+            return false
+        }
+        return lineOfSight(frame.map, me.x, me.y, enemy.x, enemy.y)
+    }
+
+    private fun updateLastSeen(frame: GameFrame, now: Long) {
+        val me = frame.me
+        if (me != null && me.alive) {
+            for (tank in frame.tanks) {
+                if (tank.slot == frame.mySlot || !tank.alive) continue
+                if (isVisibleToMe(frame, me, tank)) {
+                    lastSeen[tank.slot] = Seen(tank.x, tank.y, tank.turretDir, now)
+                }
+            }
+        }
+        lastSeen.entries.removeAll { now - it.value.at > GHOST_MS + 1000L }
+    }
+
+    private fun drawLastSeen(canvas: Canvas, frame: GameFrame, now: Long) {
+        val me = frame.me ?: return
+        if (!me.alive) return
+        for ((slot, seen) in lastSeen) {
+            val age = now - seen.at
+            if (age > GHOST_MS) continue
+            val tank = frame.tanks.firstOrNull { it.slot == slot }
+            if (tank != null && tank.alive && isVisibleToMe(frame, me, tank)) continue
+            val alpha = (1f - age / GHOST_MS.toFloat()).coerceIn(0f, 1f)
+            val a = (alpha * 210).toInt()
+            strokePaint.style = Paint.Style.STROKE
+            strokePaint.strokeWidth = 1.5f
+            strokePaint.color = (a shl 24) or 0x00FF5555
+            canvas.drawCircle(seen.x, seen.y, 11f, strokePaint)
+            bulletPaint.color = (a shl 24) or 0x00FF5555
+            canvas.drawCircle(seen.x, seen.y, 3f, bulletPaint)
+            canvas.drawLine(
+                seen.x, seen.y,
+                seen.x + cos(seen.turretDir) * 16f,
+                seen.y + sin(seen.turretDir) * 16f,
+                strokePaint,
+            )
+        }
     }
 
     private fun lineOfSight(map: TileMap, ax: Float, ay: Float, bx: Float, by: Float): Boolean {
@@ -495,6 +581,7 @@ class GameView @JvmOverloads constructor(
         val me = frame.me
         val now = SystemClock.elapsedRealtime()
         updateFeed(frame, now)
+        updateLastSeen(frame, now)
         val center = GameConfig.WORLD_SIZE / 2f
         camera.update(
             canvas.width.toFloat(),
@@ -530,6 +617,7 @@ class GameView @JvmOverloads constructor(
         drawZone(canvas, frame)
         drawSonar(canvas, frame)
         drawBlips(canvas)
+        drawLastSeen(canvas, frame, now)
         effects.drawOverlay(canvas)
         drawAimGuide(canvas, frame, me, now)
 
@@ -887,8 +975,8 @@ class GameView @JvmOverloads constructor(
             if (blip.x < camera.worldLeft || blip.x > camera.worldRight) continue
             if (blip.y < camera.worldTop || blip.y > camera.worldBottom) continue
             val age = (now - blip.bornAt).coerceAtLeast(0L)
+            if (age > 1300L) continue
             val alpha = (1f - age / 1300f).coerceIn(0f, 1f)
-            if (alpha <= 0f) continue
             bulletPaint.color = ((alpha * 120).toInt() shl 24) or 0x00FF3B3B
             canvas.drawCircle(blip.x, blip.y, 13f, bulletPaint)
             bulletPaint.color = ((alpha * 255).toInt() shl 24) or 0x00FF5252
@@ -898,7 +986,7 @@ class GameView @JvmOverloads constructor(
 
     private fun updateBlips(frame: GameFrame) {
         val now = SystemClock.elapsedRealtime()
-        blips.removeAll { now - it.bornAt > 1400L }
+        blips.removeAll { now - it.bornAt > 4200L }
         if (!frame.sonarActive) {
             lastSonarRadius = 0f
             return
@@ -1098,11 +1186,12 @@ class GameView @JvmOverloads constructor(
             textPaint.color = ((alpha * 200).toInt() shl 24) or 0x00E6ECE9
             canvas.drawText(
                 "правый стик: тап — автоогонь, потяни и отпусти — выстрел · мина и фара — справа",
-                w / 2f, safeTop + 92f * density, textPaint,
+                w / 2f, safeTop + 150f * density, textPaint,
             )
         }
 
         drawFeed(canvas, w, now)
+        drawMinimap(canvas, frame, now)
 
         if (frame.roundOver) {
             hudPaint.color = 0xB3000000.toInt()
@@ -1140,6 +1229,84 @@ class GameView @JvmOverloads constructor(
         }
     }
 
+    /** Sonar overview: full map, camera rect, sonar ring and last-known enemy dots. */
+    private fun drawMinimap(canvas: Canvas, frame: GameFrame, now: Long) {
+        val map = frame.map
+        val size = 112f * density
+        val left = canvas.width / 2f - size / 2f
+        val top = safeTop + 10f * density
+
+        if (minimapMap !== map) {
+            minimapMap = map
+            minimapBitmap = Bitmap.createBitmap(map.width, map.height, Bitmap.Config.ARGB_8888)
+            minimapTick = -1000L
+        }
+        if (frame.tick - minimapTick >= 30L) {
+            val pixels = IntArray(map.width * map.height)
+            for (ty in 0 until map.height) {
+                for (tx in 0 until map.width) {
+                    pixels[ty * map.width + tx] = when (map.tileAt(tx, ty)) {
+                        Tile.EMPTY -> 0xFF0D1318.toInt()
+                        Tile.BRICK -> 0xFF7A4027.toInt()
+                        Tile.CRACKED -> 0xFF4B2A1B.toInt()
+                        Tile.STEEL -> 0xFF4C5866.toInt()
+                        Tile.WATER -> 0xFF1B4E6A.toInt()
+                    }
+                }
+            }
+            minimapBitmap?.setPixels(pixels, 0, map.width, 0, 0, map.width, map.height)
+            minimapTick = frame.tick
+        }
+
+        hudPaint.color = 0xCC070B10.toInt()
+        canvas.drawRoundRect(
+            RectF(left - 4f * density, top - 4f * density, left + size + 4f * density, top + size + 4f * density),
+            8f * density, 8f * density, hudPaint,
+        )
+        minimapBitmap?.let {
+            canvas.drawBitmap(it, null, RectF(left, top, left + size, top + size), minimapPaint)
+        }
+
+        val scale = size / GameConfig.WORLD_SIZE
+        strokePaint.style = Paint.Style.STROKE
+        strokePaint.strokeWidth = 1f * density
+        strokePaint.color = 0x33FFFFFF
+        canvas.drawRect(
+            left + camera.worldLeft * scale,
+            top + camera.worldTop * scale,
+            left + camera.worldRight * scale,
+            top + camera.worldBottom * scale,
+            strokePaint,
+        )
+
+        if (frame.sonarActive) {
+            strokePaint.color = 0x9957D68B.toInt()
+            strokePaint.strokeWidth = 1.5f * density
+            canvas.drawCircle(left + size / 2f, top + size / 2f, frame.sonarRadius * scale, strokePaint)
+        }
+
+        for (blip in blips) {
+            val age = now - blip.bornAt
+            if (age > 4200L) continue
+            val alpha = (1f - age / 4200f).coerceIn(0f, 1f)
+            bulletPaint.color = ((alpha * 220).toInt() shl 24) or 0x00FF4040
+            canvas.drawCircle(left + blip.x * scale, top + blip.y * scale, 2.4f * density, bulletPaint)
+        }
+        for (seen in lastSeen.values) {
+            val age = now - seen.at
+            if (age > GHOST_MS) continue
+            val alpha = (1f - age / GHOST_MS.toFloat()).coerceIn(0f, 1f)
+            bulletPaint.color = ((alpha * 170).toInt() shl 24) or 0x00FF8080
+            canvas.drawCircle(left + seen.x * scale, top + seen.y * scale, 2.1f * density, bulletPaint)
+        }
+
+        val me = frame.me
+        if (me != null) {
+            bulletPaint.color = 0xFF57D68B.toInt()
+            canvas.drawCircle(left + me.x * scale, top + me.y * scale, 3f * density, bulletPaint)
+        }
+    }
+
     private fun drawBadge(canvas: Canvas, x: Float, y: Float, label: String, color: Int) {
         hudPaint.color = (0x33 shl 24) or (color and 0x00FFFFFF)
         canvas.drawCircle(x + 9f * density, y, 10f * density, hudPaint)
@@ -1167,6 +1334,7 @@ class GameView @JvmOverloads constructor(
         private val COLOR_DIM = 0xFF8A9A92.toInt()
         private val COLOR_TEXT = 0xFFE6ECE9.toInt()
         private val COLOR_HP = 0xFFFF5252.toInt()
+        private const val GHOST_MS = 4000L
         private val COLOR_FOG = 0xF8090C10.toInt()
         private val PLAYER_COLORS = intArrayOf(
             0xFF57D68B.toInt(),
