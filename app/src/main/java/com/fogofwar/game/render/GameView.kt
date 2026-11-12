@@ -615,6 +615,19 @@ class GameView @JvmOverloads constructor(
     }
 
     private fun drawTanks(canvas: Canvas, frame: GameFrame, now: Long) {
+        // Charred wrecks stay on the battlefield under the living tanks.
+        for (tank in frame.tanks) {
+            if (tank.alive) continue
+            hudPaint.color = 0x55000000
+            canvas.drawCircle(tank.x, tank.y, 16f, hudPaint)
+            tankSpritePaint.alpha = 230
+            canvas.save()
+            canvas.translate(tank.x, tank.y)
+            canvas.rotate(Math.toDegrees(tank.bodyDir.toDouble()).toFloat())
+            spriteRect.set(-16f, -16f, 16f, 16f)
+            canvas.drawBitmap(SpriteAtlas.wreck(), null, spriteRect, tankSpritePaint)
+            canvas.restore()
+        }
         for (tank in frame.tanks) {
             if (!tank.alive) continue
             val isMe = tank.slot == frame.mySlot

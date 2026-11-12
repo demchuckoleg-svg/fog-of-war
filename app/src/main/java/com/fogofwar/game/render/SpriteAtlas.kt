@@ -102,6 +102,26 @@ object SpriteAtlas {
         "................"
     )
 
+    /** Blown-up hull left on the battlefield. */
+    private val WRECK = arrayOf(
+        "................",
+        "................",
+        "..s..ss..ss..s..",
+        "..ssssssssssss..",
+        ".ss..ss..ss..ss.",
+        ".sCCCCCCCCCCCCs.",
+        ".sCsssssssssCCs.",
+        ".sCsssSSssssCCs.",
+        ".sCsssSSssssCCs.",
+        ".sCsssssssssCCs.",
+        ".ssCCCCCCCCCCss.",
+        "..ss..ss..ss..s.",
+        "..ssssssssssss..",
+        "..s..ss..ss..s..",
+        "................",
+        "................",
+    )
+
     // --- Turret + barrel, facing +X. ------------------------------------
 
     private val TURRET = arrayOf(
@@ -479,6 +499,7 @@ object SpriteAtlas {
         for (t in 0..2) pickup(t)
         mine(false)
         mine(true)
+        wreck()
         for (f in 0..2) explosion(f)
     }
 
@@ -534,6 +555,10 @@ object SpriteAtlas {
         2 -> cached("pickup:light", PICKUP_LIGHT, LIGHT_PALETTE)
         else -> cached("pickup:repair", PICKUP_REPAIR, REPAIR_PALETTE)
     }
+
+    /** Charred remains of a destroyed tank. */
+    @Synchronized
+    fun wreck(): Bitmap = cached("wreck", WRECK)
 
     /** Anti-tank mine; [armed] shows the red trigger dot. */
     @Synchronized
