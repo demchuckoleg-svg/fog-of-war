@@ -96,6 +96,8 @@ class GameView @JvmOverloads constructor(
     private val blips = ArrayList<Blip>()
     private var lastSonarRadius = 0f
     private val lastTreadAt = HashMap<Int, Long>()
+    private val lastAlive = HashMap<Int, Boolean>()
+    private val feed = ArrayList<FeedLine>()
 
     // Touch state written by the UI thread and read by the render thread.
     @Volatile private var moveX = 0f
@@ -426,6 +428,7 @@ class GameView @JvmOverloads constructor(
 
         val me = frame.me
         val now = SystemClock.elapsedRealtime()
+        updateFeed(frame, now)
         val center = GameConfig.WORLD_SIZE / 2f
         camera.update(
             canvas.width.toFloat(),
@@ -998,6 +1001,8 @@ class GameView @JvmOverloads constructor(
             )
         }
 
+        drawFeed(canvas, w, now)
+
         if (frame.roundOver) {
             hudPaint.color = 0xB3000000.toInt()
             canvas.drawRect(0f, 0f, w, h, hudPaint)
@@ -1008,6 +1013,29 @@ class GameView @JvmOverloads constructor(
             }
             drawCenteredText(canvas, title, h / 2f - 10f * density, 34f, COLOR_ME)
             drawCenteredText(canvas, "возврат в лобби…", h / 2f + 40f * density, 15f, COLOR_DIM)
+        }
+    }
+
+    private fun updateFeed(frame: GameFrame, now: Long) {
+        for (tank in frame.tanks) {
+            val wasAlive = lastAlive[tank.slot]
+            if (wasAlive == true && !tank.alive) {
+                feed.add(FeedLine("${tank.name} уничтожен", now))
+            }
+            lastAlive[tank.slot] = tank.alive
+        }
+        feed.removeAll { now - it.at > 4500L }
+    }
+
+    private fun drawFeed(canvas: Canvas, w: Float, now: Long) {
+        if (feed.isEmpty() || lastFrame?.roundOver == true) return
+        textPaint.textAlign = Paint.Align.RIGHT
+        textPaint.textSize = 12f * scaledDensity
+        for ((i, line) in feed.withIndex()) {
+            val age = now - line.at
+            val alpha = (1f - age / 4500f).coerceIn(0f, 1f)
+            textPaint.color = ((alpha * 200).toInt() shl 24) or 0x00FFB0A0
+            canvas.drawText(line.text, w - safeRight - 20f * density, safeTop + 78f * density + i * 18f * density, textPaint)
         }
     }
 
@@ -1028,6 +1056,8 @@ class GameView @JvmOverloads constructor(
     }
 
     private data class Blip(val x: Float, val y: Float, val bornAt: Long)
+
+    private data class FeedLine(val text: String, val at: Long)
 
     companion object {
         private val COLOR_VOID = 0xFF05070A.toInt()
