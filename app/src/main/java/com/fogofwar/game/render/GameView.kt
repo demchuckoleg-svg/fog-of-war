@@ -9,7 +9,11 @@ import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
+import android.os.Build
 import android.os.SystemClock
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.util.AttributeSet
 import android.util.Log
 import android.view.MotionEvent
@@ -45,6 +49,16 @@ class GameView @JvmOverloads constructor(
 
     private val density = resources.displayMetrics.density
     private val scaledDensity = resources.displayMetrics.scaledDensity
+    private val prefs = context.getSharedPreferences("fogofwar", Context.MODE_PRIVATE)
+    private val vibrator: Vibrator? = run {
+        val ctx = context.applicationContext
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            (ctx.getSystemService(VibratorManager::class.java))?.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            ctx.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        }
+    }
 
     private val camera = Camera()
     private val effects = Effects()
@@ -200,6 +214,17 @@ class GameView @JvmOverloads constructor(
         safeBottom = bottom
     }
 
+    /** Short haptic tick; disabled in settings if the player prefers silence. */
+    private fun vibrate(durationMs: Long, amplitude: Int) {
+        if (!prefs.getBoolean("haptics", true)) return
+        val v = vibrator ?: return
+        if (!v.hasVibrator()) return
+        try {
+            v.vibrate(VibrationEffect.createOneShot(durationMs, amplitude.coerceIn(1, 255)))
+        } catch (_: Throwable) {
+        }
+    }
+
     fun pauseRendering() {
         // Stop the server-side tank immediately instead of leaving the last held input alive.
         running = false
@@ -270,10 +295,12 @@ class GameView @JvmOverloads constructor(
                         when (event.kind) {
                             EffectKind.EXPLOSION -> if (dist < 520f) {
                                 addShake((1f - dist / 520f) * 16f, 380L)
+                                vibrate(60L, (120 * (1f - dist / 520f)).toInt().coerceAtLeast(40))
                             }
                             EffectKind.SHOT -> if (dist < 300f) {
                                 addShake((1f - dist / 300f) * 4f * density, 130L)
                             }
+                            EffectKind.PICKUP -> if (dist < 120f) vibrate(25L, 90)
                             else -> Unit
                         }
                     }
@@ -560,31 +587,6 @@ class GameView @JvmOverloads constructor(
         lastSeen.entries.removeAll { now - it.value.at > GHOST_MS + 1000L }
     }
 
-    private fun drawLastSeen(canvas: Canvas, frame: GameFrame, now: Long) {
-        val me = frame.me ?: return
-        if (!me.alive) return
-        for ((slot, seen) in lastSeen) {
-            val age = now - seen.at
-            if (age > GHOST_MS) continue
-            val tank = frame.tanks.firstOrNull { it.slot == slot }
-            if (tank != null && tank.alive && slot in visibleNow.indices && visibleNow[slot]) continue
-            val alpha = (1f - age / GHOST_MS.toFloat()).coerceIn(0f, 1f)
-            val a = (alpha * 210).toInt()
-            strokePaint.style = Paint.Style.STROKE
-            strokePaint.strokeWidth = 1.5f
-            strokePaint.color = (a shl 24) or 0x00FF5555
-            canvas.drawCircle(seen.x, seen.y, 11f, strokePaint)
-            bulletPaint.color = (a shl 24) or 0x00FF5555
-            canvas.drawCircle(seen.x, seen.y, 3f, bulletPaint)
-            canvas.drawLine(
-                seen.x, seen.y,
-                seen.x + cos(seen.turretDir) * 16f,
-                seen.y + sin(seen.turretDir) * 16f,
-                strokePaint,
-            )
-        }
-    }
-
     private fun lineOfSight(map: TileMap, ax: Float, ay: Float, bx: Float, by: Float): Boolean =
         !map.blocksLightAlong(ax, ay, bx, by)
 
@@ -634,7 +636,10 @@ class GameView @JvmOverloads constructor(
                 lastMySlot = me.slot
                 lastMyHp = me.hp
             } else if (me.hp != lastMyHp) {
-                if (me.hp < lastMyHp) addShake(9f * density, 320L)
+                if (me.hp < lastMyHp) {
+                    addShake(9f * density, 320L)
+                    vibrate(120L, 220)
+                }
                 lastMyHp = me.hp
             }
         }
@@ -652,11 +657,11 @@ class GameView @JvmOverloads constructor(
         drawMines(canvas, frame, now)
         drawTanks(canvas, frame, now)
         drawFog(canvas, frame, me, now)
+        drawRevealedTanks(canvas, frame, now)
         drawEnemyBeams(canvas, frame)
         drawZone(canvas, frame)
         drawSonar(canvas, frame)
         drawBlips(canvas)
-        drawLastSeen(canvas, frame, now)
         effects.drawOverlay(canvas)
         drawAimGuide(canvas, frame, me, now)
 
@@ -746,9 +751,11 @@ class GameView @JvmOverloads constructor(
         // Charred wrecks stay on the battlefield under the living tanks.
         for (tank in frame.tanks) {
             if (tank.alive) continue
+            hudPaint.color = 0x33FF7A2A
+            canvas.drawCircle(tank.x, tank.y, 22f, hudPaint)
             hudPaint.color = 0x55000000
             canvas.drawCircle(tank.x, tank.y, 16f, hudPaint)
-            tankSpritePaint.alpha = 230
+            tankSpritePaint.alpha = 255
             canvas.save()
             canvas.translate(tank.x, tank.y)
             canvas.rotate(Math.toDegrees(tank.bodyDir.toDouble()).toFloat())
@@ -757,55 +764,74 @@ class GameView @JvmOverloads constructor(
             canvas.restore()
         }
         for (tank in frame.tanks) {
-            if (!tank.alive) continue
-            val isMe = tank.slot == frame.mySlot
-            val color = if (isMe) COLOR_ME else PLAYER_COLORS[tank.slot % PLAYER_COLORS.size]
+            if (tank.alive) drawTank(canvas, frame, tank, now)
+        }
+    }
 
-            canvas.drawCircle(tank.x + 2f, tank.y + 5f, 13f, shadowPaint)
+    private fun drawTank(canvas: Canvas, frame: GameFrame, tank: RenderTank, now: Long) {
+        val isMe = tank.slot == frame.mySlot
+        val color = if (isMe) COLOR_ME else PLAYER_COLORS[tank.slot % PLAYER_COLORS.size]
 
-            val alpha = if (tank.invulnerable && (now / 90L) % 2L == 0L) 90 else 220
-            tankSpritePaint.alpha = alpha
-            val treadFrame = if (tank.moving) ((now / 90L) % 2L).toInt() else 0
-            val hull = SpriteAtlas.hull(color, treadFrame)
-            val turret = SpriteAtlas.turret(color)
+        canvas.drawCircle(tank.x + 2f, tank.y + 5f, 13f, shadowPaint)
 
-            canvas.save()
-            canvas.translate(tank.x, tank.y)
-            canvas.rotate(Math.toDegrees(tank.bodyDir.toDouble()).toFloat())
-            spriteRect.set(-16f, -16f, 16f, 16f)
-            canvas.drawBitmap(hull, null, spriteRect, tankSpritePaint)
-            canvas.restore()
+        val alpha = if (tank.invulnerable && (now / 90L) % 2L == 0L) 90 else 220
+        tankSpritePaint.alpha = alpha
+        val treadFrame = if (tank.moving) ((now / 90L) % 2L).toInt() else 0
+        val hull = SpriteAtlas.hull(color, treadFrame)
+        val turret = SpriteAtlas.turret(color)
 
-            val turretDir = if (isMe && now < shotVisualUntil && !shotVisualAngle.isNaN()) {
-                shotVisualAngle
-            } else {
-                tank.turretDir
+        canvas.save()
+        canvas.translate(tank.x, tank.y)
+        canvas.rotate(Math.toDegrees(tank.bodyDir.toDouble()).toFloat())
+        spriteRect.set(-16f, -16f, 16f, 16f)
+        canvas.drawBitmap(hull, null, spriteRect, tankSpritePaint)
+        canvas.restore()
+
+        val turretDir = if (isMe && now < shotVisualUntil && !shotVisualAngle.isNaN()) {
+            shotVisualAngle
+        } else {
+            tank.turretDir
+        }
+        canvas.save()
+        canvas.translate(tank.x, tank.y)
+        canvas.rotate(Math.toDegrees(turretDir.toDouble()).toFloat())
+        canvas.translate(-tank.cooldown * 4.5f, 0f)
+        canvas.drawBitmap(turret, null, spriteRect, tankSpritePaint)
+        canvas.restore()
+
+        if (isMe) {
+            strokePaint.color = 0x55FFFFFF
+            strokePaint.strokeWidth = 1.2f
+            canvas.drawCircle(tank.x, tank.y, 14f, strokePaint)
+        }
+
+        if (!isMe) {
+            textPaint.textAlign = Paint.Align.CENTER
+            textPaint.textSize = 10f * scaledDensity / camera.scale
+            textPaint.color = 0xCCE6ECE9.toInt()
+            canvas.drawText(tank.name, tank.x, tank.y - 19f, textPaint)
+            val pipW = 7f
+            for (i in 0 until GameConfig.MAX_HP) {
+                hudPaint.color = if (i < tank.hp) 0xFFE05555.toInt() else 0x55333333
+                val px = tank.x - pipW * 1.5f + i * (pipW + 1f)
+                canvas.drawRect(px, tank.y - 17f, px + pipW, tank.y - 14f, hudPaint)
             }
-            canvas.save()
-            canvas.translate(tank.x, tank.y)
-            canvas.rotate(Math.toDegrees(turretDir.toDouble()).toFloat())
-            canvas.translate(-tank.cooldown * 4.5f, 0f)
-            canvas.drawBitmap(turret, null, spriteRect, tankSpritePaint)
-            canvas.restore()
+        }
+    }
 
-            if (isMe) {
-                strokePaint.color = 0x55FFFFFF
-                strokePaint.strokeWidth = 1.2f
-                canvas.drawCircle(tank.x, tank.y, 14f, strokePaint)
-            }
-
-            if (!isMe) {
-                textPaint.textAlign = Paint.Align.CENTER
-                textPaint.textSize = 10f * scaledDensity / camera.scale
-                textPaint.color = 0xCCE6ECE9.toInt()
-                canvas.drawText(tank.name, tank.x, tank.y - 19f, textPaint)
-                val pipW = 7f
-                for (i in 0 until GameConfig.MAX_HP) {
-                    hudPaint.color = if (i < tank.hp) 0xFFE05555.toInt() else 0x55333333
-                    val px = tank.x - pipW * 1.5f + i * (pipW + 1f)
-                    canvas.drawRect(px, tank.y - 17f, px + pipW, tank.y - 14f, hudPaint)
-                }
-            }
+    /**
+     * An enemy that just left the headlight stays fully drawn for a couple of seconds,
+     * instead of turning into a red "ghost" marker.
+     */
+    private fun drawRevealedTanks(canvas: Canvas, frame: GameFrame, now: Long) {
+        val me = frame.me ?: return
+        if (!me.alive) return
+        for (tank in frame.tanks) {
+            if (!tank.alive || tank.slot == frame.mySlot) continue
+            if (tank.slot in visibleNow.indices && visibleNow[tank.slot]) continue
+            val seen = lastSeen[tank.slot] ?: continue
+            if (now - seen.at > REVEAL_MS) continue
+            drawTank(canvas, frame, tank, now)
         }
     }
 
@@ -1365,6 +1391,7 @@ class GameView @JvmOverloads constructor(
         private val COLOR_TEXT = 0xFFE6ECE9.toInt()
         private val COLOR_HP = 0xFFFF5252.toInt()
         private const val GHOST_MS = 4000L
+        private const val REVEAL_MS = 2_200L
         private val COLOR_FOG = 0xF8090C10.toInt()
         private val PLAYER_COLORS = intArrayOf(
             0xFF57D68B.toInt(),

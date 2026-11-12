@@ -8,7 +8,7 @@ Multiplayer Android top-down tank game (1–6 players via Google Play Services N
 - **Network:** Nearby Connections (`...nearby.v4`), binary `ByteBuffer` protocol v4.
 - **Environment:** No local Android SDK. CI (GitHub Actions) runs unit tests and builds signed release APK (`versionCode = 1000 + GITHUB_RUN_NUMBER`) on every push.
 - **Verification commands:**
-  - Local JVM tests (for `core/`): `./gradlew test`
+  - JVM unit tests: `./gradlew testReleaseUnitTest` (requires Android SDK + JDK 17; in this environment run them via CI on push)
   - Check CI build after push: `gh run watch`
 
 ## Architecture & Modules
@@ -26,7 +26,7 @@ Multiplayer Android top-down tank game (1–6 players via Google Play Services N
   - `SpriteAtlas.kt`: 16×16 ASCII grids → nearest-neighbour `Bitmap` with per-slot tank coloring.
   - `Effects.kt`: tracks, muzzle flash, sparks, smoke, explosions, sound rings, camera shake, barrel recoil.
   - `MapPreviewView`: lobby map preview using the same deterministic generator.
-- `ui/` / Input — Twin-stick controls: left stick = body movement (`moveX/Y`), right stick = Brawl Stars aim (tap = auto-aim nearest LoS enemy, drag & release = manual fire), plus `MINE` and `LIGHT` toggle buttons.
+- `render/GameView.kt` (Input) — Twin-stick controls: left stick = body movement (`moveX/Y`), right stick = Brawl Stars aim (tap = auto-aim nearest LoS enemy, drag & release = manual fire), plus `MINE` and `LIGHT` toggle buttons.
 
 ## Hard Rules for Agents
 1. **Keep `core/` pure:** Never import `android.*` inside `core/`. All simulation logic must remain runnable via JVM unit tests.

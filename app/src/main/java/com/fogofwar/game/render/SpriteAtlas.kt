@@ -62,6 +62,14 @@ object SpriteAtlas {
         'L' to 0xFFFFF3B8.toInt()
     )
 
+    /** Brighter charred metal so wrecks stay readable in the dark. */
+    private val WRECK_PALETTE = BASE + mapOf(
+        's' to 0xFF6A737E.toInt(),
+        'S' to 0xFFA7B3C0.toInt(),
+        'C' to 0xFF4A2E1E.toInt(),
+        'T' to 0xFF7C858F.toInt()
+    )
+
     // --- Tank hull, facing +X. Two tread phases. -------------------------
 
     private val HULL_0 = arrayOf(
@@ -558,7 +566,7 @@ object SpriteAtlas {
 
     /** Charred remains of a destroyed tank. */
     @Synchronized
-    fun wreck(): Bitmap = cached("wreck", WRECK)
+    fun wreck(): Bitmap = cached("wreck", WRECK, WRECK_PALETTE)
 
     /** Anti-tank mine; [armed] shows the red trigger dot. */
     @Synchronized
