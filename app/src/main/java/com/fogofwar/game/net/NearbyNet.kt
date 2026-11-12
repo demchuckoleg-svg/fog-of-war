@@ -74,8 +74,8 @@ class NearbyNet(context: Context) {
         private set
 
     private val humans = LinkedHashMap<Int, PlayerInfo>()
-    private val endpointBySlot = HashMap<Int, String>()
-    private val slotByEndpoint = HashMap<String, Int>()
+    private val endpointBySlot = java.util.concurrent.ConcurrentHashMap<Int, String>()
+    private val slotByEndpoint = java.util.concurrent.ConcurrentHashMap<String, Int>()
     private val pendingNames = HashMap<String, String>()
     private val discovered = LinkedHashMap<String, String>()
     @Volatile
@@ -290,7 +290,7 @@ class NearbyNet(context: Context) {
     }
 
     internal fun broadcastRaw(bytes: ByteArray) {
-        for (endpointId in ArrayList(slotByEndpoint.keys)) {
+        for (endpointId in slotByEndpoint.keys.toList()) {
             sendRaw(endpointId, bytes)
         }
     }

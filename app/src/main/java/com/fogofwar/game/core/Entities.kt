@@ -86,8 +86,10 @@ class Tank(
         return flags
     }
 
-    fun cooldownFraction(): Float =
-        (cooldown / GameConfig.FIRE_COOLDOWN).coerceIn(0f, 1f)
+    fun cooldownFraction(): Float {
+        val base = if (powerTime > 0f) GameConfig.FIRE_COOLDOWN_POWER else GameConfig.FIRE_COOLDOWN
+        return (cooldown / base).coerceIn(0f, 1f)
+    }
 }
 
 class Bullet(

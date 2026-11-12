@@ -84,7 +84,10 @@ object GameConfig {
     const val FLAG_LIGHT = 32
 
     /** Client renders this far in the past to interpolate between snapshots. */
-    const val INTERPOLATION_DELAY_MS = 95L
+    const val INTERPOLATION_DELAY_MS = 80L
     const val SNAPSHOT_HZ = 30
     const val INPUT_SEND_HZ = 20
+
+    /** Host treats a slot as idle when no input packet arrives for this long. */
+    const val INPUT_TIMEOUT_MS = 500L
 }

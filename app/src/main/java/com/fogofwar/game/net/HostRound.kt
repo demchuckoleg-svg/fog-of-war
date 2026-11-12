@@ -31,6 +31,9 @@ class HostRound(
     var finished: Boolean = false
         private set
 
+    @Volatile
+    private var aborted: Boolean = false
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private var tick = 0L
@@ -49,6 +52,7 @@ class HostRound(
     }
 
     fun stop() {
+        aborted = true
         finished = true
         scope.coroutineContext[Job]?.cancel()
     }
@@ -107,7 +111,11 @@ class HostRound(
                     events = ArrayList(snapshotEvents),
                 )
                 snapshotEvents.clear()
-                net.broadcastRaw(Protocol.snapshot(snapshot))
+                try {
+                    net.broadcastRaw(Protocol.snapshot(snapshot))
+                } catch (t: Throwable) {
+                    net.reportError("Ошибка отправки снапшота: ${t.message}")
+                }
             }
 
             if (world.roundOver) {
@@ -126,7 +134,7 @@ class HostRound(
             next += tickNanos
             if (now - next > 8 * tickNanos) next = now
         }
-        net.onHostRoundFinished(world.winnerSlot, world.winnerName)
+        if (!aborted) net.onHostRoundFinished(world.winnerSlot, world.winnerName)
     }
 
     private fun buildFrame(): GameFrame {

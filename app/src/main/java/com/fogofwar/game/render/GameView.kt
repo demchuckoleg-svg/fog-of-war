@@ -22,6 +22,7 @@ import com.fogofwar.game.core.Tile
 import com.fogofwar.game.net.GameFrame
 import com.fogofwar.game.net.NearbyNet
 import com.fogofwar.game.net.RenderTank
+import com.fogofwar.game.net.RoomState
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.hypot
@@ -159,6 +160,9 @@ class GameView @JvmOverloads constructor(
     }
 
     fun pauseRendering() {
+        // Stop the server-side tank immediately instead of leaving the last held input alive.
+        resetInput()
+        net.sendInput(0f, 0f, 0f, 0f, false, lightsOn, false)
         running = false
         val t = renderThread
         renderThread = null
@@ -183,7 +187,9 @@ class GameView @JvmOverloads constructor(
         thread.start()
     }
 
-    override fun surfaceCreated(holder: SurfaceHolder) = startThread()
+    override fun surfaceCreated(holder: SurfaceHolder) {
+        if (!running) startThread()
+    }
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
 
@@ -217,13 +223,14 @@ class GameView @JvmOverloads constructor(
                 if (now - lastInput >= 50L) {
                     lastInput = now
                     val autoFire = hypot(aimX, aimY) >= GameConfig.AIM_FIRE_THRESHOLD
+                    val dropRequested = dropMineRequest
                     net.sendInput(
                         moveX, moveY, aimX, aimY,
                         fire = firing || autoFire,
                         lights = lightsOn,
-                        dropMine = dropMineRequest,
+                        dropMine = dropRequested,
                     )
-                    dropMineRequest = false
+                    if (dropRequested && net.roomState == RoomState.IN_GAME) dropMineRequest = false
                 }
 
                 val frame = net.currentFrame()
@@ -284,6 +291,12 @@ class GameView @JvmOverloads constructor(
             minePointerId = id
             dropMineRequest = true
             return
+        }
+
+        // A second finger landing on an already-held fire/mine button must not become the aim stick.
+        if (x >= width / 2f) {
+            if (hypot(x - fireButtonX(), y - fireButtonY()) <= fireRadius) return
+            if (hypot(x - mineButtonX(), y - mineButtonY()) <= mineRadius) return
         }
 
         if (x < width / 2f && movePointerId == -1) {
@@ -441,8 +454,8 @@ class GameView @JvmOverloads constructor(
             if (me.slot != lastMySlot) {
                 lastMySlot = me.slot
                 lastMyHp = me.hp
-            } else if (me.hp < lastMyHp) {
-                addShake(9f * density, 320L)
+            } else if (me.hp != lastMyHp) {
+                if (me.hp < lastMyHp) addShake(9f * density, 320L)
                 lastMyHp = me.hp
             }
         }
@@ -630,7 +643,7 @@ class GameView @JvmOverloads constructor(
 
     private fun drawFog(canvas: Canvas, frame: GameFrame, me: RenderTank?, now: Long) {
         // Extra margin covers camera shake so no unfogged strip appears at the screen edge.
-        val margin = 96f
+        val margin = 40f
         val left = camera.worldLeft - margin
         val top = camera.worldTop - margin
         val right = camera.worldRight + margin
@@ -729,7 +742,17 @@ class GameView @JvmOverloads constructor(
             if (!tank.alive || tank.slot == frame.mySlot || !tank.lightsOn) continue
             if (tank.x < camera.worldLeft - 400f || tank.x > camera.worldRight + 400f) continue
             if (tank.y < camera.worldTop - 400f || tank.y > camera.worldBottom + 400f) continue
-            buildCone(enemyPath, frame, tank, GameConfig.LIGHT_RANGE * 0.9f, GameConfig.LIGHT_HALF_ANGLE)
+            val range = if (tank.lightBoost) {
+                GameConfig.LIGHT_RANGE * GameConfig.LIGHT_RANGE_BOOST * 0.9f
+            } else {
+                GameConfig.LIGHT_RANGE * 0.9f
+            }
+            val half = if (tank.lightBoost) {
+                GameConfig.LIGHT_HALF_ANGLE * GameConfig.LIGHT_HALF_ANGLE_BOOST
+            } else {
+                GameConfig.LIGHT_HALF_ANGLE
+            }
+            buildCone(enemyPath, frame, tank, range, half)
             beamPaint.color = 0x0DFFE0A0
             canvas.drawPath(enemyPath, beamPaint)
             strokePaint.color = 0x1AFFE0A0

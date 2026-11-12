@@ -103,6 +103,18 @@ class GameWorldTest {
     }
 
     @Test
+    fun disconnectLeavesSurvivorAsWinner() {
+        val world = GameWorld(MapGenerator.generate(3, 31L), 3, 31L)
+        world.addPlayer(0, "survivor")
+        world.addPlayer(1, "leaver")
+        world.requestRemove(1)
+        world.step(GameConfig.TICK_DT)
+        assertTrue(world.roundOver)
+        assertEquals(0, world.winnerSlot)
+        assertEquals("survivor", world.winnerName)
+    }
+
+    @Test
     fun lastAlivePlayerWins() {
         val world = GameWorld(MapGenerator.generate(2, 11L), 2, 11L)
         world.addPlayer(0, "winner")

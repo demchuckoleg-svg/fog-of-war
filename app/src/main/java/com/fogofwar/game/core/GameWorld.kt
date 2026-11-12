@@ -50,7 +50,9 @@ class GameWorld(
     private var lastPickupType = -1
 
     private val inputs = java.util.concurrent.ConcurrentHashMap<Int, TankInput>()
+    private val lastInputNanos = java.util.concurrent.ConcurrentHashMap<Int, Long>()
     private val bots = HashMap<Int, BotController>()
+    private var startedWithOpponents = false
     private val pendingRemovals = java.util.concurrent.ConcurrentLinkedQueue<Int>()
     private val previousDrop = HashMap<Int, Boolean>()
     private val rng = Rng(seed xor 0x5DEECE66DL)
@@ -64,20 +66,22 @@ class GameWorld(
 
     fun setInput(slot: Int, input: TankInput) {
         inputs[slot] = input.clamped()
+        lastInputNanos[slot] = System.nanoTime()
     }
 
-    fun addPlayer(slot: Int, name: String): Tank {
+    fun addPlayer(slot: Int, name: String, isBot: Boolean = false): Tank {
         val spawn = map.spawns[slot % map.spawns.size]
         val x = (spawn[0] + 0.5f) * GameConfig.TILE
         val y = (spawn[1] + 0.5f) * GameConfig.TILE
         val dir = atan2(centerY - y, centerX - x)
-        val tank = Tank(slot, name, x, y, dir, dir)
+        val tank = Tank(slot, name, x, y, dir, dir, isBot)
         tanks.add(tank)
+        if (tanks.size >= 2) startedWithOpponents = true
         return tank
     }
 
     fun addBot(slot: Int, name: String): Tank {
-        val tank = addPlayer(slot, name)
+        val tank = addPlayer(slot, name, isBot = true)
         bots[slot] = BotController(slot, rng)
         return tank
     }
@@ -85,6 +89,7 @@ class GameWorld(
     fun removeTank(slot: Int) {
         tanks.removeAll { it.slot == slot }
         inputs.remove(slot)
+        lastInputNanos.remove(slot)
         bots.remove(slot)
         previousDrop.remove(slot)
     }
@@ -126,7 +131,12 @@ class GameWorld(
             inputs[slot] = bot.update(this, dt)
         }
         for (tank in tanks) {
-            updateTank(tank, inputs[tank.slot] ?: TankInput(), dt)
+            val raw = inputs[tank.slot] ?: TankInput()
+            val last = lastInputNanos[tank.slot]
+            val stale = last != null &&
+                System.nanoTime() - last > GameConfig.INPUT_TIMEOUT_MS * 1_000_000L
+            val input = if (stale) TankInput(lights = raw.lights) else raw
+            updateTank(tank, input, dt)
         }
         updateBullets(dt)
         updateMines(dt)
@@ -431,7 +441,8 @@ class GameWorld(
     }
 
     private fun checkRoundOver() {
-        if (roundOver || tanks.size < 2) return
+        if (roundOver) return
+        if (tanks.size < 2 && !startedWithOpponents) return
         val alive = tanks.filter { it.alive }
         if (alive.size <= 1) {
             roundOver = true
