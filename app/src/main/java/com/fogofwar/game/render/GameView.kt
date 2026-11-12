@@ -20,6 +20,7 @@ import com.fogofwar.game.App
 import com.fogofwar.game.core.EffectKind
 import com.fogofwar.game.core.GameConfig
 import com.fogofwar.game.core.Tile
+import com.fogofwar.game.core.TileMap
 import com.fogofwar.game.net.GameFrame
 import com.fogofwar.game.net.NearbyNet
 import com.fogofwar.game.net.RenderTank
@@ -109,6 +110,12 @@ class GameView @JvmOverloads constructor(
     @Volatile private var lightsOn = true
     @Volatile private var dropMineRequest = false
 
+    /** Queued one-shot: send fire=true with this angle for a couple of input ticks. */
+    @Volatile private var shotAngle = Float.NaN
+    @Volatile private var shotSendsLeft = 0
+    @Volatile private var shotVisualAngle = Float.NaN
+    @Volatile private var shotVisualUntil = 0L
+
     @Volatile private var moveActive = false
     @Volatile private var moveBaseX = 0f
     @Volatile private var moveBaseY = 0f
@@ -116,7 +123,7 @@ class GameView @JvmOverloads constructor(
     @Volatile private var moveKnobY = 0f
 
     @Volatile private var aimActive = false
-    @Volatile private var aimAtEdge = false
+    @Volatile private var aimDragged = false
     @Volatile private var aimBaseX = 0f
     @Volatile private var aimBaseY = 0f
     @Volatile private var aimKnobX = 0f
@@ -222,12 +229,20 @@ class GameView @JvmOverloads constructor(
                 if (now - lastInput >= 50L) {
                     lastInput = now
                     val dropRequested = dropMineRequest
+                    val tapAngle = shotAngle
+                    val hasShot = shotSendsLeft > 0 && !tapAngle.isNaN()
                     net.sendInput(
-                        moveX, moveY, aimX, aimY,
-                        fire = aimAtEdge,
+                        moveX, moveY,
+                        if (hasShot) cos(tapAngle) else aimX,
+                        if (hasShot) sin(tapAngle) else aimY,
+                        fire = hasShot,
                         lights = lightsOn,
                         dropMine = dropRequested,
                     )
+                    if (hasShot) {
+                        shotSendsLeft -= 1
+                        if (shotSendsLeft <= 0) shotAngle = Float.NaN
+                    }
                     if (dropRequested && net.roomState == RoomState.IN_GAME) dropMineRequest = false
                 }
 
@@ -302,7 +317,7 @@ class GameView @JvmOverloads constructor(
         } else if (x >= width / 2f && aimPointerId == -1) {
             aimPointerId = id
             aimActive = true
-            aimAtEdge = false
+            aimDragged = false
             aimBaseX = x
             aimBaseY = y
             aimKnobX = x
@@ -325,7 +340,7 @@ class GameView @JvmOverloads constructor(
                 var dx = event.getX(index) - aimBaseX
                 var dy = event.getY(index) - aimBaseY
                 val rawLen = hypot(dx, dy)
-                aimAtEdge = rawLen >= aimRadius - 0.5f
+                if (rawLen > 14f * density) aimDragged = true
                 if (rawLen > aimRadius) {
                     dx = dx / rawLen * aimRadius
                     dy = dy / rawLen * aimRadius
@@ -375,11 +390,19 @@ class GameView @JvmOverloads constructor(
             moveY = 0f
         }
         if (id == aimPointerId) {
+            val dragged = aimDragged
+            val magnitude = hypot(aimX, aimY)
+            val angle = when {
+                !dragged -> autoAimAngle()
+                magnitude >= GameConfig.AIM_DEADZONE -> kotlin.math.atan2(aimY, aimX)
+                else -> null
+            }
             aimPointerId = -1
             aimActive = false
-            aimAtEdge = false
+            aimDragged = false
             aimX = 0f
             aimY = 0f
+            if (angle != null) queueShot(angle)
         }
         if (id == minePointerId) minePointerId = -1
     }
@@ -390,12 +413,54 @@ class GameView @JvmOverloads constructor(
         minePointerId = -1
         moveActive = false
         aimActive = false
-        aimAtEdge = false
+        aimDragged = false
         moveX = 0f
         moveY = 0f
         aimX = 0f
         aimY = 0f
         dropMineRequest = false
+    }
+
+    private fun queueShot(angle: Float) {
+        shotAngle = angle
+        shotSendsLeft = 2
+        shotVisualAngle = angle
+        shotVisualUntil = SystemClock.elapsedRealtime() + 260L
+    }
+
+    /** Tap on the aim stick: nearest enemy with a clear line of sight, otherwise a random direction. */
+    private fun autoAimAngle(): Float {
+        val frame = lastFrame
+        val me = frame?.me
+        if (frame != null && me != null) {
+            var best: RenderTank? = null
+            var bestDist = GameConfig.AUTO_AIM_RANGE
+            for (tank in frame.tanks) {
+                if (!tank.alive || tank.slot == frame.mySlot) continue
+                val dist = hypot(tank.x - me.x, tank.y - me.y)
+                if (dist >= bestDist) continue
+                if (!lineOfSight(frame.map, me.x, me.y, tank.x, tank.y)) continue
+                best = tank
+                bestDist = dist
+            }
+            if (best != null) {
+                return kotlin.math.atan2(best.y - me.y, best.x - me.x)
+            }
+        }
+        return (Math.random() * Math.PI * 2.0).toFloat()
+    }
+
+    private fun lineOfSight(map: TileMap, ax: Float, ay: Float, bx: Float, by: Float): Boolean {
+        val dx = bx - ax
+        val dy = by - ay
+        val dist = hypot(dx, dy)
+        if (dist < 1f) return true
+        val steps = (dist / 12f).toInt() + 1
+        for (i in 1 until steps) {
+            val t = i.toFloat() / steps
+            if (map.blocksLightAtWorld(ax + dx * t, ay + dy * t)) return false
+        }
+        return true
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -466,7 +531,7 @@ class GameView @JvmOverloads constructor(
         drawSonar(canvas, frame)
         drawBlips(canvas)
         effects.drawOverlay(canvas)
-        drawAimGuide(canvas, frame, me)
+        drawAimGuide(canvas, frame, me, now)
 
         canvas.restore()
 
@@ -570,9 +635,14 @@ class GameView @JvmOverloads constructor(
             canvas.drawBitmap(hull, null, spriteRect, tankSpritePaint)
             canvas.restore()
 
+            val turretDir = if (isMe && now < shotVisualUntil && !shotVisualAngle.isNaN()) {
+                shotVisualAngle
+            } else {
+                tank.turretDir
+            }
             canvas.save()
             canvas.translate(tank.x, tank.y)
-            canvas.rotate(Math.toDegrees(tank.turretDir.toDouble()).toFloat())
+            canvas.rotate(Math.toDegrees(turretDir.toDouble()).toFloat())
             canvas.translate(-tank.cooldown * 4.5f, 0f)
             canvas.drawBitmap(turret, null, spriteRect, tankSpritePaint)
             canvas.restore()
@@ -840,11 +910,17 @@ class GameView @JvmOverloads constructor(
         }
     }
 
-    private fun drawAimGuide(canvas: Canvas, frame: GameFrame, me: RenderTank?) {
+    private fun drawAimGuide(canvas: Canvas, frame: GameFrame, me: RenderTank?, now: Long) {
         if (me == null || !me.alive) return
+        val angle = when {
+            aimActive && hypot(aimX, aimY) >= GameConfig.AIM_DEADZONE ->
+                kotlin.math.atan2(aimY, aimX)
+            now < shotVisualUntil && !shotVisualAngle.isNaN() -> shotVisualAngle
+            else -> me.turretDir
+        }
         val range = ownLightRange(me)
-        val ex = me.x + cos(me.turretDir) * range
-        val ey = me.y + sin(me.turretDir) * range
+        val ex = me.x + cos(angle) * range
+        val ey = me.y + sin(angle) * range
         strokePaint.color = 0x3357D68B
         strokePaint.strokeWidth = 1.4f
         strokePaint.style = Paint.Style.STROKE
@@ -913,14 +989,8 @@ class GameView @JvmOverloads constructor(
         strokePaint.color = if (aimActive) 0x6657D68B else 0x2E57D68B
         strokePaint.strokeWidth = 2f * density
         canvas.drawCircle(aimBaseXDraw, aimBaseYDraw, aimRadius, strokePaint)
-        val aimFiring = aimActive && aimAtEdge
-        hudPaint.color = if (aimFiring) 0xCC57D68B.toInt() else 0x5557D68B
+        hudPaint.color = if (aimActive) 0x8857D68B.toInt() else 0x5557D68B
         canvas.drawCircle(aimKnobXDraw, aimKnobYDraw, aimKnobRadius, hudPaint)
-        if (aimFiring) {
-            strokePaint.strokeWidth = 2f * density
-            strokePaint.color = 0xAA57D68B.toInt()
-            canvas.drawCircle(aimBaseXDraw, aimBaseYDraw, aimRadius, strokePaint)
-        }
 
         // Mine button.
         val mx = mineButtonX()
@@ -1014,7 +1084,7 @@ class GameView @JvmOverloads constructor(
             textPaint.textSize = 12.5f * scaledDensity
             textPaint.color = ((alpha * 200).toInt() shl 24) or 0x00E6ECE9
             canvas.drawText(
-                "левый стик — езда · правый — башня, до края — огонь · мина и лампочка — справа",
+                "правый стик: тап — автоогонь, потяни и отпусти — выстрел · мина и фара — справа",
                 w / 2f, safeTop + 92f * density, textPaint,
             )
         }

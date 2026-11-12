@@ -205,6 +205,9 @@ class GameWorld(
         }
 
         if (input.fire && tank.cooldown <= 0f) {
+            // A released/tapped stick must shoot exactly where the player aimed, not where the
+            // slowly rotating turret happened to be.
+            if (move.hasAim) tank.turretDir = move.aimAngle()
             fire(tank)
         }
 

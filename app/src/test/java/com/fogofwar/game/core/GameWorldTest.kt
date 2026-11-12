@@ -131,6 +131,23 @@ class GameWorldTest {
     }
 
     @Test
+    fun releaseShotFiresExactlyAlongTheAim() {
+        val world = GameWorld(MapGenerator.generate(0, 61L), 0, 61L)
+        val shooter = world.addPlayer(0, "shooter")
+        world.addPlayer(1, "target")
+        shooter.x = 1000f
+        shooter.y = 1024f
+        shooter.turretDir = 0f
+        world.setInput(0, TankInput(aimX = 0f, aimY = -1f, fire = true))
+        world.step(GameConfig.TICK_DT)
+        assertEquals(-Math.PI.toFloat() / 2f, shooter.turretDir, 0.01f)
+        assertTrue(world.bullets.isNotEmpty())
+        val bullet = world.bullets.first()
+        assertTrue("bullet went the wrong way", bullet.vy < -100f)
+        assertTrue(Math.abs(bullet.vx) < 1f)
+    }
+
+    @Test
     fun tanksArePushedApart() {
         val world = GameWorld(MapGenerator.generate(0, 51L), 0, 51L)
         val a = world.addPlayer(0, "a")

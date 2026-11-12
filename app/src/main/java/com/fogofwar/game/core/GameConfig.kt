@@ -18,7 +18,7 @@ object GameConfig {
     /** How fast the hull visually turns toward the movement stick. */
     const val BODY_TURN_SPEED = 9f
     /** Turret tracking speed while the aim stick is held. */
-    const val TURRET_TURN_SPEED = 10f
+    const val TURRET_TURN_SPEED = 6f
     /** Turret lazily recenters to the hull when driving without aiming. */
     const val TURRET_IDLE_TURN_SPEED = 2.2f
 
@@ -33,6 +33,8 @@ object GameConfig {
     const val INVULN_TIME = 0.65f
 
     const val AIM_DEADZONE = 0.22f
+    /** Tap-to-shoot picks the nearest enemy within this range if the line of sight is clear. */
+    const val AUTO_AIM_RANGE = 700f
 
     /** Zone is a circle around the map centre. */
     const val ZONE_START_RADIUS = 1460f
