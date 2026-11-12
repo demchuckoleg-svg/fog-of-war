@@ -378,7 +378,7 @@ class GameWorld(
             val x = (tx + 0.5f) * GameConfig.TILE
             val y = (ty + 0.5f) * GameConfig.TILE
             if (!map.isFreeForTankBox(x, y, 12f)) continue
-            if (hypot(x - centerX, y - centerY) > (zoneRadius * 0.8f).coerceAtLeast(140f)) continue
+            if (hypot(x - centerX, y - centerY) > (zoneRadius * 0.8f).coerceAtLeast(60f)) continue
             if (tanks.any { it.distanceTo(x, y) < 170f }) continue
             if (pickups.any { hypot(it.x - x, it.y - y) < 150f }) continue
             if (mines.any { hypot(it.x - x, it.y - y) < 90f }) continue
