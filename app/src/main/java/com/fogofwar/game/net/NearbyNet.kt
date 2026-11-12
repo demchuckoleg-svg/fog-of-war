@@ -293,6 +293,8 @@ class NearbyNet(context: Context) {
             }
             lastWinner = winnerName
             roomState = RoomState.LOBBY
+            // Pre-pick the next map so the lobby preview shows exactly what will be played.
+            mapId = nextRoundMapId()
             broadcastRoster()
             startAdvertising()
             listener?.onRoundEnded(winnerName)
