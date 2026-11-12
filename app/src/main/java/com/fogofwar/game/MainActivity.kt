@@ -191,6 +191,8 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
         binding.roomCodeText.text = getString(R.string.room_code, state.roomCode)
         binding.roomCodeText.visibility = if (state.roomCode.isBlank()) View.GONE else View.VISIBLE
         binding.mapPreview.displayedMapId = state.mapId
+        binding.mapDescription.text =
+            MapGenerator.MAP_DESCRIPTIONS.getOrElse(state.mapId) { "" }
 
         val host = state.isHost
         binding.mapSpinner.visibility = if (host) View.VISIBLE else View.GONE

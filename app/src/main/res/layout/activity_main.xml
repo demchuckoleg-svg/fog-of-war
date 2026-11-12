@@ -165,6 +165,16 @@
                 android:paddingStart="12dp"
                 android:paddingEnd="12dp" />
 
+            <TextView
+                android:id="@+id/mapDescription"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:textColor="@color/text_dim"
+                android:textSize="13sp" />
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

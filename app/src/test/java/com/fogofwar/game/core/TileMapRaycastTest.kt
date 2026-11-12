@@ -13,9 +13,9 @@ class TileMapRaycastTest {
     fun clearRayReturnsMaxDistance() {
         val map = TileMap(8, 8)
 
-        val hit = map.raycastLight(2.5f * t, 4.5f * t, 1f, 0f, 300f)
+        val hit = map.raycastLight(2.5f * t, 4.5f * t, 1f, 0f, 100f)
 
-        assertEquals(300f, hit, 0.001f)
+        assertEquals(100f, hit, 0.001f)
     }
 
     @Test
@@ -53,9 +53,9 @@ class TileMapRaycastTest {
     fun diagonalRayPassesThroughAnOpenDiagonal() {
         val map = TileMap(8, 8)
 
-        val hit = map.raycastLight(2.5f * t, 2.5f * t, 1f, 1f, 300f)
+        val hit = map.raycastLight(2.5f * t, 2.5f * t, 1f, 1f, 100f)
 
-        assertEquals(300f, hit, 0.001f)
+        assertEquals(100f, hit, 0.001f)
     }
 
     @Test
@@ -71,9 +71,9 @@ class TileMapRaycastTest {
         val map = TileMap(8, 8)
         map.fillRect(4, 0, 4, 7, Tile.WATER)
 
-        val hit = map.raycastLight(2.5f * t, 4.5f * t, 1f, 0f, 300f)
+        val hit = map.raycastLight(2.5f * t, 4.5f * t, 1f, 0f, 100f)
 
-        assertEquals(300f, hit, 0.001f)
+        assertEquals(100f, hit, 0.001f)
     }
 
     @Test

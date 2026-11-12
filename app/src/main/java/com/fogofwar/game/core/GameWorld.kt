@@ -62,8 +62,6 @@ class GameWorld(
 
     fun tank(slot: Int): Tank? = tanks.firstOrNull { it.slot == slot }
 
-    fun aliveCount(): Int = tanks.count { it.alive }
-
     fun setInput(slot: Int, input: TankInput) {
         inputs[slot] = input.clamped()
         lastInputNanos[slot] = System.nanoTime()

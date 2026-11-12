@@ -36,13 +36,10 @@ data class TankInput(
         return TankInput(mx, my, ax, ay, fire, lights, dropMine)
     }
 
-    val isMoving: Boolean get() = hypot(moveX, moveY) > 0.08f
     val hasAim: Boolean get() = hypot(aimX, aimY) > GameConfig.AIM_DEADZONE
     val aimMagnitude: Float get() = hypot(aimX, aimY)
     fun aimAngle(): Float = atan2(aimY, aimX)
-}
-
-class Tank(
+}class Tank(
     val slot: Int,
     var name: String,
     var x: Float,
@@ -70,7 +67,6 @@ class Tank(
     var mineRecharge: Float = 0f
 
     val isPowered: Boolean get() = powerTime > 0f
-    val hasLightBoost: Boolean get() = lightTime > 0f
 
     fun distanceTo(px: Float, py: Float): Float = hypot(x - px, y - py)
 
