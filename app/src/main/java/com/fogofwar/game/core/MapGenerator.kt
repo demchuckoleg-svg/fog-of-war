@@ -63,27 +63,27 @@ object MapGenerator {
     }
 
     private fun generateRuins(map: TileMap, rng: Rng) {
-        var by = 5
+        var by = 4
         while (by < map.height - 4) {
-            var bx = 5
+            var bx = 4
             while (bx < map.width - 4) {
-                if (rng.nextFloat() >= 0.16f) {
-                    val w = rng.nextInt(4, 7)
-                    val h = rng.nextInt(4, 7)
+                if (rng.nextFloat() >= 0.12f) {
+                    val w = rng.nextInt(5, 8)
+                    val h = rng.nextInt(5, 8)
                     val tile = if (rng.nextFloat() < 0.16f) Tile.STEEL else Tile.BRICK
                     map.fillRect(bx, by, min(bx + w - 1, map.width - 2), min(by + h - 1, map.height - 2), tile)
-                    if (tile == Tile.BRICK && rng.nextFloat() < 0.5f && w > 4 && h > 4) {
+                    if (tile == Tile.BRICK && rng.nextFloat() < 0.55f && w > 5 && h > 5) {
                         map.clearRect(bx + 2, by + 2, bx + w - 3, by + h - 3)
                     }
                 }
-                bx += 11
+                bx += 9
             }
-            by += 11
+            by += 9
         }
-        repeat(30) {
+        repeat(36) {
             val x = rng.nextInt(3, map.width - 4)
             val y = rng.nextInt(3, map.height - 4)
-            map.fillRect(x, y, x + rng.nextInt(0, 2), y + rng.nextInt(0, 2), Tile.BRICK)
+            map.fillRect(x, y, x + rng.nextInt(0, 3), y + rng.nextInt(0, 3), Tile.BRICK)
         }
     }
 

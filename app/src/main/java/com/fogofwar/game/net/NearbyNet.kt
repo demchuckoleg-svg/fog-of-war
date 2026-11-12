@@ -81,6 +81,7 @@ class NearbyNet(context: Context) {
 
     fun updateNickname(name: String) {
         nickname = name.trim().ifBlank { "Танк" }.take(16)
+        humans[0]?.let { humans[0] = it.copy(name = nickname) }
     }
 
     fun attachListener(l: Listener?) {
@@ -119,7 +120,10 @@ class NearbyNet(context: Context) {
         discovered.clear()
         val options = DiscoveryOptions.Builder().setStrategy(Strategy.P2P_STAR).build()
         client.startDiscovery(SERVICE_ID, discoveryCallback, options)
-            .addOnFailureListener { e -> reportError("Поиск не запустился: ${e.message}") }
+            .addOnFailureListener { e ->
+                if (roomState == RoomState.DISCOVERING) roomState = RoomState.IDLE
+                reportError("Поиск не запустился: ${e.message}")
+            }
         notifyLobby()
     }
 
@@ -246,7 +250,13 @@ class NearbyNet(context: Context) {
     private fun startAdvertising() {
         val options = AdvertisingOptions.Builder().setStrategy(Strategy.P2P_STAR).build()
         client?.startAdvertising(SERVICE_ID, nickname, connectionCallback, options)
-            ?.addOnFailureListener { e -> reportError("Не удалось создать комнату: ${e.message}") }
+            ?.addOnFailureListener { e ->
+                if (roomState == RoomState.HOSTING) {
+                    roomState = RoomState.IDLE
+                    humans.clear()
+                }
+                reportError("Не удалось создать комнату: ${e.message}")
+            }
     }
 
     private fun sendRaw(endpointId: String, bytes: ByteArray) {
@@ -459,7 +469,6 @@ class NearbyNet(context: Context) {
     }
 
     private fun startClientRound(message: NetMessage.StartRound) {
-        if (roomState == RoomState.IN_GAME) return
         val map = MapGenerator.generate(message.mapId, message.seed)
         mapId = message.mapId
         clientRound = ClientRound(map, message.mapId, mySlot, message.players)

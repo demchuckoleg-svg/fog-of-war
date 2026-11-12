@@ -95,6 +95,9 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
         super.onResume()
         net.attachListener(this)
         render(net.lobbySnapshot())
+        if (net.roomState == RoomState.IN_GAME) {
+            startActivity(Intent(this, GameActivity::class.java))
+        }
     }
 
     override fun onPause() {
@@ -220,7 +223,8 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
         }
 
         binding.lobbyHint.text = when {
-            !host -> getString(R.string.waiting_for_host)
+            !host -> "Карта: ${MapGenerator.MAP_NAMES.getOrElse(state.mapId) { "?" }}. " +
+                getString(R.string.waiting_for_host)
             state.players.size <= 1 -> getString(R.string.solo_hint)
             else -> "Игроков: ${state.players.size}. Можно начинать."
         }

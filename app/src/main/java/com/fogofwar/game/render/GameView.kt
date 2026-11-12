@@ -98,6 +98,8 @@ class GameView @JvmOverloads constructor(
     private var fireX = 0f
     private var fireY = 0f
 
+    private var hintUntil = 0L
+
     init {
         holder.addCallback(this)
         isFocusable = true
@@ -275,6 +277,7 @@ class GameView @JvmOverloads constructor(
             drawCenteredText(canvas, "ожидание состояния от хоста", canvas.height / 2f + 34f * density, 13f, COLOR_DIM)
             return
         }
+        if (hintUntil == 0L) hintUntil = SystemClock.elapsedRealtime() + 5500L
 
         val me = frame.me
         val centerX = GameConfig.WORLD_SIZE / 2f
@@ -597,6 +600,15 @@ class GameView @JvmOverloads constructor(
         if (me != null && !me.alive && !frame.roundOver) {
             drawCenteredText(canvas, "УНИЧТОЖЕН", h / 2f, 22f, 0xCCFF6B6B.toInt())
             drawCenteredText(canvas, "наблюдение", h / 2f + 30f * density, 13f, COLOR_DIM)
+        }
+
+        val now = SystemClock.elapsedRealtime()
+        if (now < hintUntil && !frame.roundOver) {
+            val alpha = ((hintUntil - now) / 5500f).coerceIn(0f, 1f)
+            textPaint.textAlign = Paint.Align.CENTER
+            textPaint.textSize = 13f * scaledDensity
+            textPaint.color = ((alpha * 210).toInt() shl 24) or 0x00E6ECE9
+            canvas.drawText("джойстик — левая половина · огонь — правая", w / 2f, 88f * density, textPaint)
         }
 
         if (frame.roundOver) {
