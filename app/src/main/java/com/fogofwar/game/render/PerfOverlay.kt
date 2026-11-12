@@ -44,6 +44,8 @@ class PerfOverlay {
         color = 0xFFB8F5D0.toInt()
     }
     private val background = Paint().apply { color = 0xB0000000.toInt() }
+    private var lines = arrayOf("", "", "", "")
+    private var blockWidth = 0f
 
     fun frame(nanos: Long) {
         frameNanos[frameIndex] = nanos
@@ -65,41 +67,45 @@ class PerfOverlay {
             sampleFrames()
             sampleGc(now)
             sampleNetwork(now, sentBytes, receivedBytes)
+            paint.textSize = textSize
+            rebuildLines()
         }
 
         paint.textSize = textSize
         val lineHeight = textSize * 1.25f
-        val lines = arrayOf(
-            String.format(
-                Locale.US,
-                "fps %.0f  avg %.1f  p95 %.1f ms",
-                if (avgMs > 0.0) 1000.0 / avgMs else 0.0,
-                avgMs,
-                p95Ms,
-            ),
-            String.format(
-                Locale.US,
-                "world %.1f  tanks %.1f  fog %.1f ms",
-                sections[0],
-                sections[1],
-                sections[2],
-            ),
-            String.format(Locale.US, "hud %.1f  total %.1f ms", sections[3], sections[4]),
-            String.format(
-                Locale.US,
-                "gc %.1f/s  net %.1f/%.1f KB/s",
-                gcPerSecond,
-                sentPerSecond / 1024.0,
-                receivedPerSecond / 1024.0,
-            ),
-        )
-        var width = 0f
-        for (line in lines) width = maxOf(width, paint.measureText(line))
         background.alpha = 176
-        canvas.drawRect(x - 6f, y - 4f, x + width + 6f, y + lines.size * lineHeight + 4f, background)
+        canvas.drawRect(x - 6f, y - 4f, x + blockWidth + 6f, y + lines.size * lineHeight + 4f, background)
         for ((index, line) in lines.withIndex()) {
             canvas.drawText(line, x, y + textSize + index * lineHeight, paint)
         }
+    }
+
+    private fun rebuildLines() {
+        lines[0] = String.format(
+            Locale.US,
+            "fps %.0f  avg %.1f  p95 %.1f ms",
+            if (avgMs > 0.0) 1000.0 / avgMs else 0.0,
+            avgMs,
+            p95Ms,
+        )
+        lines[1] = String.format(
+            Locale.US,
+            "world %.1f  tanks %.1f  fog %.1f ms",
+            sections[0],
+            sections[1],
+            sections[2],
+        )
+        lines[2] = String.format(Locale.US, "hud %.1f  total %.1f ms", sections[3], sections[4])
+        lines[3] = String.format(
+            Locale.US,
+            "gc %.1f/s  net %.1f/%.1f KB/s",
+            gcPerSecond,
+            sentPerSecond / 1024.0,
+            receivedPerSecond / 1024.0,
+        )
+        var width = 0f
+        for (line in lines) width = maxOf(width, paint.measureText(line))
+        blockWidth = width
     }
 
     private fun sampleFrames() {
