@@ -14,6 +14,7 @@ import com.google.android.gms.nearby.connection.ConnectionInfo
 import com.google.android.gms.nearby.connection.ConnectionLifecycleCallback
 import com.google.android.gms.nearby.connection.ConnectionResolution
 import com.google.android.gms.nearby.connection.ConnectionsClient
+import com.google.android.gms.nearby.connection.ConnectionsStatusCodes
 import com.google.android.gms.nearby.connection.DiscoveredEndpointInfo
 import com.google.android.gms.nearby.connection.DiscoveryOptions
 import com.google.android.gms.nearby.connection.EndpointDiscoveryCallback
@@ -39,7 +40,9 @@ class NearbyNet(context: Context) {
 
     companion object {
         private const val TAG = "NearbyNet"
-        const val SERVICE_ID = "com.fogofwar.game.nearby.v3"
+        const val SERVICE_ID = "com.fogofwar.game.nearby.v4"
+        const val VERSION_MISMATCH_MESSAGE =
+            "Версия приложения не совпадает. Обновите APK у всех игроков."
 
         /**
          * Advertising restarts are the only way to update the room description, so batch
@@ -49,6 +52,9 @@ class NearbyNet(context: Context) {
 
         /** A short advertising restart looks like a lost endpoint; keep the row meanwhile. */
         private const val ENDPOINT_LOST_GRACE_MS = 3_000L
+
+        /** Client gives up when the host stops sending snapshots (frozen app, dead link). */
+        private const val SNAPSHOT_TIMEOUT_MS = 2_500L
     }
 
     private val client: ConnectionsClient? = try {
@@ -87,11 +93,15 @@ class NearbyNet(context: Context) {
     private val humans = LinkedHashMap<Int, PlayerInfo>()
     private val endpointBySlot = java.util.concurrent.ConcurrentHashMap<Int, String>()
     private val slotByEndpoint = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    private val lastInputSeq = HashMap<Int, Int>()
     private val pendingNames = HashMap<String, String>()
+    private val rejectedEndpoints = HashSet<String>()
     private val discovered = LinkedHashMap<String, HostInfo>()
     private val lostRemovals = HashMap<String, Runnable>()
+    private val lastFoundAt = HashMap<String, Long>()
     @Volatile
     private var hostEndpoint: String? = null
+    @Volatile
     private var status: String? = null
     private var inputSeq = 0
     private var sessionGeneration = 0
@@ -100,6 +110,8 @@ class NearbyNet(context: Context) {
     private var discoveryRetries = 0
     private var discoveryRetry: Runnable? = null
     private var advertisingUpdate: Runnable? = null
+    private var advertisingRetry: Runnable? = null
+    private var snapshotWatchdog: Runnable? = null
     private var advertisedName: String? = null
     private val effectQueue = java.util.concurrent.ConcurrentLinkedQueue<EffectEvent>()
 
@@ -356,9 +368,9 @@ class NearbyNet(context: Context) {
     }
 
     /** Called by [HostRound] on the simulation thread when the round is finished. */
-    internal fun onHostRoundFinished(winnerSlot: Int, winnerName: String?) {
+    internal fun onHostRoundFinished(round: HostRound, winnerSlot: Int, winnerName: String?) {
         mainHandler.post {
-            if (!isHost) return@post
+            if (!isHost || hostRound !== round) return@post
             hostRound = null
             client?.stopAdvertising()
             advertisedName = null
@@ -427,14 +439,19 @@ class NearbyNet(context: Context) {
     private fun cancelAdvertisingUpdate() {
         advertisingUpdate?.let(mainHandler::removeCallbacks)
         advertisingUpdate = null
+        advertisingRetry?.let(mainHandler::removeCallbacks)
+        advertisingRetry = null
     }
 
     private fun applyAdvertising() {
         val name = desiredAdvertisingName()
         if (name == advertisedName) return
-        client?.stopAdvertising()
         advertisedName = null
-        if (name != null) startAdvertising(name)
+        val connection = client ?: return
+        // stopAdvertising is asynchronous: starting in the same turn fails with ALREADY_ADVERTISING.
+        connection.stopAdvertising().addOnCompleteListener {
+            if (name != null && desiredAdvertisingName() == name) startAdvertising(name)
+        }
     }
 
     private fun startAdvertising(name: String, attempt: Int = 0) {
@@ -447,18 +464,18 @@ class NearbyNet(context: Context) {
                 if (roomState == RoomState.IN_GAME || roomState == RoomState.IDLE) return@addOnFailureListener
                 if (attempt < 2) {
                     client?.stopAdvertising()
-                    mainHandler.postDelayed({
+                    val retry = Runnable {
+                        advertisingRetry = null
                         if (desiredAdvertisingName() != name) {
                             applyAdvertising()
                         } else {
                             startAdvertising(name, attempt + 1)
                         }
-                    }, 1_200L)
-                } else {
-                    if (roomState == RoomState.HOSTING) {
-                        roomState = RoomState.IDLE
-                        humans.clear()
                     }
+                    advertisingRetry = retry
+                    mainHandler.postDelayed(retry, 1_200L)
+                } else {
+                    // Keep the room (and already connected players) alive; just report it.
                     reportError("Не удалось создать комнату: ${e.message}")
                 }
             }
@@ -467,7 +484,35 @@ class NearbyNet(context: Context) {
     private fun clearDiscovered() {
         for (removal in lostRemovals.values) mainHandler.removeCallbacks(removal)
         lostRemovals.clear()
+        lastFoundAt.clear()
         discovered.clear()
+    }
+
+    /**
+     * A frozen host keeps the connection alive but stops sending snapshots. Without this the
+     * client would render one stale frame forever with no way to understand what happened.
+     */
+    private fun startSnapshotWatchdog() {
+        cancelSnapshotWatchdog()
+        val runnable = object : Runnable {
+            override fun run() {
+                if (isHost || roomState != RoomState.IN_GAME) return
+                val round = clientRound ?: return
+                if (System.nanoTime() / 1_000_000L - round.lastSnapshotAt > SNAPSHOT_TIMEOUT_MS) {
+                    resetToIdle(notify = false)
+                    reportError("Связь с хостом потеряна")
+                    return
+                }
+                mainHandler.postDelayed(this, 1_000L)
+            }
+        }
+        snapshotWatchdog = runnable
+        mainHandler.postDelayed(runnable, 1_000L)
+    }
+
+    private fun cancelSnapshotWatchdog() {
+        snapshotWatchdog?.let(mainHandler::removeCallbacks)
+        snapshotWatchdog = null
     }
 
     private fun sendRaw(endpointId: String, bytes: ByteArray) {
@@ -486,6 +531,7 @@ class NearbyNet(context: Context) {
         connectToken++
         cancelDiscoveryRetry()
         cancelAdvertisingUpdate()
+        cancelSnapshotWatchdog()
         isHost = false
         hostEndpoint = null
         hostRound?.stop()
@@ -499,6 +545,8 @@ class NearbyNet(context: Context) {
         endpointBySlot.clear()
         slotByEndpoint.clear()
         pendingNames.clear()
+        rejectedEndpoints.clear()
+        lastInputSeq.clear()
         clearDiscovered()
         roomState = RoomState.IDLE
         mySlot = 0
@@ -553,10 +601,12 @@ class NearbyNet(context: Context) {
             pendingNames[endpointId] = info.endpointName.trim().ifBlank { "Игрок" }.take(16)
             val c = client ?: return
             if (isHost && humans.size >= GameConfig.MAX_PLAYERS) {
+                pendingNames.remove(endpointId)
                 c.rejectConnection(endpointId)
                 return
             }
             if (isHost && roomState == RoomState.IN_GAME) {
+                pendingNames.remove(endpointId)
                 c.rejectConnection(endpointId)
                 return
             }
@@ -567,17 +617,35 @@ class NearbyNet(context: Context) {
             val c = client ?: return
             connectToken++
             if (!result.status.isSuccess) {
+                rejectedEndpoints.remove(endpointId)
                 if (!isHost) {
                     resetToIdle(notify = false)
-                    reportError("Не удалось подключиться: ${result.status.statusMessage ?: "ошибка"}")
+                    val reason = if (result.status.statusCode == ConnectionsStatusCodes.STATUS_CONNECTION_REJECTED) {
+                        "Комната заполнена или идёт бой"
+                    } else {
+                        result.status.statusMessage ?: "ошибка"
+                    }
+                    reportError("Не удалось подключиться: $reason")
                 } else {
                     reportError("Не удалось подключить игрока: ${result.status.statusMessage ?: "ошибка"}")
                 }
                 return
             }
             if (isHost) {
+                if (rejectedEndpoints.remove(endpointId)) {
+                    c.disconnectFromEndpoint(endpointId)
+                    return
+                }
+                if (roomState == RoomState.IN_GAME) {
+                    sendRaw(endpointId, Protocol.roomClosed("Идёт бой, зайдите после раунда"))
+                    pendingNames.remove(endpointId)
+                    c.disconnectFromEndpoint(endpointId)
+                    return
+                }
                 val slot = freeSlot()
                 if (slot == null) {
+                    sendRaw(endpointId, Protocol.roomClosed("Комната заполнена"))
+                    pendingNames.remove(endpointId)
                     c.disconnectFromEndpoint(endpointId)
                     return
                 }
@@ -601,12 +669,14 @@ class NearbyNet(context: Context) {
         }
 
         override fun onDisconnected(endpointId: String) {
+            rejectedEndpoints.remove(endpointId)
+            pendingNames.remove(endpointId)
             if (isHost) {
                 val slot = slotByEndpoint.remove(endpointId)
-                pendingNames.remove(endpointId)
                 if (slot != null) {
                     endpointBySlot.remove(slot)
                     humans.remove(slot)
+                    lastInputSeq.remove(slot)
                     hostRound?.world?.requestRemove(slot)
                     broadcastRoster()
                     updateAdvertising()
@@ -622,7 +692,19 @@ class NearbyNet(context: Context) {
     private val discoveryCallback = object : EndpointDiscoveryCallback() {
         override fun onEndpointFound(endpointId: String, info: DiscoveredEndpointInfo) {
             lostRemovals.remove(endpointId)?.let(mainHandler::removeCallbacks)
+            lastFoundAt[endpointId] = android.os.SystemClock.elapsedRealtime()
             val host = HostInfo.fromEndpoint(endpointId, info.endpointName)
+            // Updating the descriptor restarts advertising, which may produce a new endpoint id
+            // for the same room. Keep exactly one row per room code.
+            if (host.code.isNotBlank()) {
+                val stale = discovered.entries
+                    .filter { it.key != endpointId && it.value.code == host.code }
+                    .map { it.key }
+                for (key in stale) {
+                    discovered.remove(key)
+                    lastFoundAt.remove(key)
+                }
+            }
             if (discovered[endpointId] == host) return
             discovered[endpointId] = host
             cancelDiscoveryRetry()
@@ -634,9 +716,20 @@ class NearbyNet(context: Context) {
             // Updating the advertised descriptor restarts advertising, which can look like
             // a lost endpoint for a moment. Keep the row for a grace period.
             lostRemovals.remove(endpointId)?.let(mainHandler::removeCallbacks)
+            val lostAt = android.os.SystemClock.elapsedRealtime()
             val removal = Runnable {
                 lostRemovals.remove(endpointId)
-                if (discovered.remove(endpointId) != null) notifyLobby()
+                // A newer advertisement of the same endpoint arrived while we waited.
+                if ((lastFoundAt[endpointId] ?: 0L) > lostAt) return@Runnable
+                lastFoundAt.remove(endpointId)
+                if (discovered.remove(endpointId) != null) {
+                    notifyLobby()
+                    // The retry chain is cancelled on the first find; re-arm it after the last row.
+                    if (discovered.isEmpty() && !isHost && roomState == RoomState.DISCOVERING) {
+                        discoveryRetries = 0
+                        scheduleDiscoveryRetry()
+                    }
+                }
             }
             lostRemovals[endpointId] = removal
             mainHandler.postDelayed(removal, ENDPOINT_LOST_GRACE_MS)
@@ -644,17 +737,31 @@ class NearbyNet(context: Context) {
     }
 
     private fun handleMessage(endpointId: String, bytes: ByteArray) {
-        val message = Protocol.parse(bytes) ?: return
+        val message = Protocol.parse(bytes) ?: run {
+            Log.w(TAG, "unparsable payload: ${bytes.size}B, type=${bytes.firstOrNull()}")
+            return
+        }
         if (isHost) {
             when (message) {
                 is NetMessage.Hello -> {
+                    if (message.version != Protocol.VERSION) {
+                        rejectEndpoint(endpointId, VERSION_MISMATCH_MESSAGE)
+                        return
+                    }
                     val slot = slotByEndpoint[endpointId] ?: return
                     humans[slot] = humans[slot]?.copy(name = message.name) ?: PlayerInfo(slot, message.name)
+                    // A join accepted just before StartRound may not have received it.
+                    if (roomState == RoomState.IN_GAME) {
+                        hostRound?.let { sendRaw(endpointId, it.startMessage()) }
+                    }
                     broadcastRoster()
                     updateAdvertising()
                 }
                 is NetMessage.InputMsg -> {
                     val slot = slotByEndpoint[endpointId] ?: return
+                    val previousSeq = lastInputSeq[slot]
+                    if (previousSeq != null && message.seq <= previousSeq) return
+                    lastInputSeq[slot] = message.seq
                     if (roomState == RoomState.IN_GAME) {
                         hostRound?.world?.setInput(
                             slot,
@@ -673,8 +780,15 @@ class NearbyNet(context: Context) {
                 else -> Unit
             }
         } else {
+            // Only the host we joined may drive this client.
+            if (endpointId != hostEndpoint) return
             when (message) {
                 is NetMessage.Welcome -> {
+                    if (message.version != Protocol.VERSION) {
+                        resetToIdle(notify = false)
+                        reportError(VERSION_MISMATCH_MESSAGE)
+                        return
+                    }
                     mySlot = message.slot
                     notifyLobby()
                 }
@@ -698,9 +812,10 @@ class NearbyNet(context: Context) {
                     if (message.snapshot.events.isNotEmpty()) pushEffects(message.snapshot.events)
                     clientRound?.onSnapshot(message.snapshot)
                 }
+                is NetMessage.TileSync -> clientRound?.onTileChanges(message.changes)
                 is NetMessage.RoundOver -> {
                     lastWinner = message.winnerName.ifBlank { null }
-                    clientRound?.setRoundOver(lastWinner)
+                    clientRound?.setRoundOver(message.winnerSlot, lastWinner)
                     listener?.onRoundEnded(lastWinner)
                 }
                 is NetMessage.MapSelect -> {
@@ -717,7 +832,25 @@ class NearbyNet(context: Context) {
         }
     }
 
+    /** Drops an endpoint that speaks an incompatible protocol version. */
+    private fun rejectEndpoint(endpointId: String, reason: String) {
+        rejectedEndpoints.add(endpointId)
+        sendRaw(endpointId, Protocol.roomClosed(reason))
+        val slot = slotByEndpoint.remove(endpointId)
+        if (slot != null) {
+            endpointBySlot.remove(slot)
+            humans.remove(slot)
+            lastInputSeq.remove(slot)
+            hostRound?.world?.requestRemove(slot)
+        }
+        pendingNames.remove(endpointId)
+        client?.disconnectFromEndpoint(endpointId)
+        broadcastRoster()
+        updateAdvertising()
+    }
+
     private fun startClientRound(message: NetMessage.StartRound) {
+        if (clientRound != null && roomState == RoomState.IN_GAME && mapId == message.mapId) return
         val map = MapGenerator.generate(message.mapId, message.seed)
         mapId = message.mapId
         clientRound = ClientRound(map, message.mapId, mySlot, message.players)
@@ -726,6 +859,7 @@ class NearbyNet(context: Context) {
         lastWinner = null
         status = null
         client?.stopDiscovery()
+        startSnapshotWatchdog()
         listener?.onRoundStarted(message.mapId)
         notifyLobby()
     }

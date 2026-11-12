@@ -5,8 +5,6 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
-import android.graphics.PorterDuff
-import android.graphics.PorterDuffXfermode
 import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
@@ -26,12 +24,12 @@ import com.fogofwar.game.core.angleDelta
 import com.fogofwar.game.net.GameFrame
 import com.fogofwar.game.net.NearbyNet
 import com.fogofwar.game.net.RenderTank
-import com.fogofwar.game.net.RoomState
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.hypot
 import kotlin.math.sin
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * SurfaceView renderer: pixel-art world -> effects -> tanks -> raycast headlight fog ->
@@ -40,7 +38,7 @@ import java.util.concurrent.ConcurrentHashMap
 class GameView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
-) : SurfaceView(context, attrs), SurfaceHolder.Callback, Runnable {
+) : SurfaceView(context, attrs), SurfaceHolder.Callback {
 
     private val net: NearbyNet
         get() = (context.applicationContext as App).net
@@ -53,9 +51,32 @@ class GameView @JvmOverloads constructor(
 
     private val lightPath = Path()
     private val enemyPath = Path()
+    private val fogPath = Path()
+    private val selfHole = Path()
+    private val visibleNow = BooleanArray(GameConfig.MAX_PLAYERS)
     private val glintX = FloatArray(GameConfig.LIGHT_RAYS)
     private val glintY = FloatArray(GameConfig.LIGHT_RAYS)
     private var glintCount = 0
+
+    // Shaders live in tank-local coordinates and are reused; only the canvas is translated.
+    private val coneGlow = RadialGradient(
+        0f, 0f, GameConfig.LIGHT_RANGE,
+        intArrayOf(0x5AFFF1C4, 0x24FFD98A, 0x00FFD98A),
+        floatArrayOf(0f, 0.55f, 1f),
+        Shader.TileMode.CLAMP,
+    )
+    private val coneGlowBoost = RadialGradient(
+        0f, 0f, GameConfig.LIGHT_RANGE * GameConfig.LIGHT_RANGE_BOOST,
+        intArrayOf(0x5AFFF1C4, 0x24FFD98A, 0x00FFD98A),
+        floatArrayOf(0f, 0.55f, 1f),
+        Shader.TileMode.CLAMP,
+    )
+    private val haloGlow = RadialGradient(
+        0f, 0f, 85f,
+        intArrayOf(0x2EFFF1C4, 0x00FFF1C4),
+        floatArrayOf(0f, 1f),
+        Shader.TileMode.CLAMP,
+    )
 
     private val groundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = COLOR_GROUND
@@ -73,9 +94,6 @@ class GameView @JvmOverloads constructor(
     }
     private val bulletPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val fogPaint = Paint().apply { color = COLOR_FOG }
-    private val clearPaint = Paint().apply {
-        xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
-    }
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val beamPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
@@ -92,6 +110,7 @@ class GameView @JvmOverloads constructor(
     private val arcRect = RectF()
 
     private var renderThread: Thread? = null
+    private val renderGeneration = AtomicInteger()
 
     @Volatile
     private var running = false
@@ -144,9 +163,9 @@ class GameView @JvmOverloads constructor(
     @Volatile private var aimKnobX = 0f
     @Volatile private var aimKnobY = 0f
 
-    private var movePointerId = -1
-    private var aimPointerId = -1
-    private var minePointerId = -1
+    @Volatile private var movePointerId = -1
+    @Volatile private var aimPointerId = -1
+    @Volatile private var minePointerId = -1
 
     private var moveRadius = 0f
     private var moveKnobRadius = 0f
@@ -182,43 +201,61 @@ class GameView @JvmOverloads constructor(
 
     fun pauseRendering() {
         // Stop the server-side tank immediately instead of leaving the last held input alive.
-        resetInput()
-        net.sendInput(0f, 0f, 0f, 0f, false, lightsOn, false)
         running = false
+        renderGeneration.incrementAndGet()
+        resetInput()
+        try {
+            net.sendInput(0f, 0f, 0f, 0f, false, lightsOn, false)
+        } catch (t: Throwable) {
+            Log.w("GameView", "could not send the stop input", t)
+        }
         val t = renderThread
         renderThread = null
         if (t != null && t !== Thread.currentThread()) {
             try {
-                t.join(400)
+                t.join(1_500)
             } catch (_: InterruptedException) {
             }
+            if (t.isAlive) Log.w("GameView", "render thread did not stop in time")
         }
     }
 
     fun resumeRendering() {
-        if (running) return
+        if (running && renderThread?.isAlive == true) return
         if (holder.surface?.isValid != true) return
         startThread()
     }
 
+    /** Stops the local tank without pausing the renderer (window lost focus, shade pulled). */
+    fun releaseInput() {
+        resetInput()
+        try {
+            net.sendInput(0f, 0f, 0f, 0f, false, lightsOn, false)
+        } catch (t: Throwable) {
+            Log.w("GameView", "could not send the stop input", t)
+        }
+    }
+
     private fun startThread() {
+        val generation = renderGeneration.incrementAndGet()
         running = true
-        val thread = Thread(this, "GameRender")
+        val thread = Thread({ runLoop(generation) }, "GameRender")
         renderThread = thread
         thread.start()
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
-        if (!running) startThread()
+        if (renderThread?.isAlive != true) startThread()
     }
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
 
     override fun surfaceDestroyed(holder: SurfaceHolder) = pauseRendering()
 
-    override fun run() {
+    private fun runLoop(generation: Int) {
         var lastInput = 0L
-        while (running) {
+        var failures = 0
+        while (running && renderGeneration.get() == generation) {
             val frameStart = System.nanoTime()
             try {
                 val now = SystemClock.elapsedRealtime()
@@ -258,7 +295,7 @@ class GameView @JvmOverloads constructor(
                         shotSendsLeft -= 1
                         if (shotSendsLeft <= 0) shotAngle = Float.NaN
                     }
-                    if (dropRequested && net.roomState == RoomState.IN_GAME) dropMineRequest = false
+                    if (dropRequested) dropMineRequest = false
                 }
 
                 val frame = net.currentFrame()
@@ -266,16 +303,22 @@ class GameView @JvmOverloads constructor(
                     updateBlips(frame)
                     lastFrame = frame
                 }
-                val canvas = holder.lockCanvas() ?: continue
+                val canvas = holder.lockCanvas()
+                if (canvas == null) {
+                    SystemClock.sleep(8)
+                    continue
+                }
                 try {
                     drawFrame(canvas, lastFrame)
                 } finally {
                     holder.unlockCanvasAndPost(canvas)
                 }
+                failures = 0
             } catch (t: Throwable) {
-                if (running && t !is IllegalStateException) {
-                    Log.e("GameView", "render loop failed", t)
-                    pauseRendering()
+                if (running && renderGeneration.get() == generation) {
+                    failures++
+                    Log.e("GameView", "render loop failed ($failures)", t)
+                    if (failures >= 3) pauseRendering()
                 }
             }
             val elapsedMs = (System.nanoTime() - frameStart) / 1_000_000L
@@ -407,17 +450,18 @@ class GameView @JvmOverloads constructor(
         if (id == aimPointerId) {
             val dragged = aimDragged
             val magnitude = hypot(aimX, aimY)
-            val angle = when {
-                !dragged -> autoAimAngle()
-                magnitude >= GameConfig.AIM_DEADZONE -> kotlin.math.atan2(aimY, aimX)
-                else -> null
+            // A tiny drag is still a tap: players expect auto-aim instead of a dead release.
+            val angle = if (!dragged || magnitude < GameConfig.AIM_DEADZONE) {
+                autoAimAngle()
+            } else {
+                kotlin.math.atan2(aimY, aimX)
             }
             aimPointerId = -1
             aimActive = false
             aimDragged = false
             aimX = 0f
             aimY = 0f
-            if (angle != null) queueShot(angle)
+            queueShot(angle)
         }
         if (id == minePointerId) minePointerId = -1
     }
@@ -434,6 +478,8 @@ class GameView @JvmOverloads constructor(
         aimX = 0f
         aimY = 0f
         dropMineRequest = false
+        shotAngle = Float.NaN
+        shotSendsLeft = 0
     }
 
     private fun queueShot(angle: Float) {
@@ -499,12 +545,14 @@ class GameView @JvmOverloads constructor(
     }
 
     private fun updateLastSeen(frame: GameFrame, now: Long) {
+        visibleNow.fill(false)
         val me = frame.me
         if (me != null && me.alive) {
             for (tank in frame.tanks) {
                 if (tank.slot == frame.mySlot || !tank.alive) continue
                 if (isVisibleToMe(frame, me, tank)) {
                     lastSeen[tank.slot] = Seen(tank.x, tank.y, tank.turretDir, now)
+                    if (tank.slot in visibleNow.indices) visibleNow[tank.slot] = true
                 }
             }
         }
@@ -518,7 +566,7 @@ class GameView @JvmOverloads constructor(
             val age = now - seen.at
             if (age > GHOST_MS) continue
             val tank = frame.tanks.firstOrNull { it.slot == slot }
-            if (tank != null && tank.alive && isVisibleToMe(frame, me, tank)) continue
+            if (tank != null && tank.alive && slot in visibleNow.indices && visibleNow[slot]) continue
             val alpha = (1f - age / GHOST_MS.toFloat()).coerceIn(0f, 1f)
             val a = (alpha * 210).toInt()
             strokePaint.style = Paint.Style.STROKE
@@ -536,18 +584,8 @@ class GameView @JvmOverloads constructor(
         }
     }
 
-    private fun lineOfSight(map: TileMap, ax: Float, ay: Float, bx: Float, by: Float): Boolean {
-        val dx = bx - ax
-        val dy = by - ay
-        val dist = hypot(dx, dy)
-        if (dist < 1f) return true
-        val steps = (dist / 12f).toInt() + 1
-        for (i in 1 until steps) {
-            val t = i.toFloat() / steps
-            if (map.blocksLightAtWorld(ax + dx * t, ay + dy * t)) return false
-        }
-        return true
-    }
+    private fun lineOfSight(map: TileMap, ax: Float, ay: Float, bx: Float, by: Float): Boolean =
+        !map.blocksLightAlong(ax, ay, bx, by)
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
@@ -807,48 +845,48 @@ class GameView @JvmOverloads constructor(
         val top = camera.worldTop - margin
         val right = camera.worldRight + margin
         val bottom = camera.worldBottom + margin
-        val layer = canvas.saveLayer(left, top, right, bottom, null)
-        canvas.drawRect(left, top, right, bottom, fogPaint)
+
+        fogPath.reset()
+        fogPath.addRect(left, top, right, bottom, Path.Direction.CW)
+
         if (me != null) {
             if (me.alive) {
                 if (me.lightsOn) {
                     buildOwnLight(frame, me)
-                    canvas.drawPath(lightPath, clearPaint)
+                    val range = ownLightRange(me)
+                    // Glow is drawn under the fog: the cone hole reveals it, everything else is covered.
+                    glowPaint.shader = if (me.lightBoost) coneGlowBoost else coneGlow
+                    canvas.save()
+                    canvas.translate(me.x, me.y)
+                    canvas.drawCircle(0f, 0f, range, glowPaint)
+                    canvas.restore()
+                    glowPaint.shader = null
+                    fogPath.op(lightPath, Path.Op.DIFFERENCE)
                 }
-                canvas.drawCircle(me.x, me.y, GameConfig.LIGHT_SELF_RADIUS, clearPaint)
+                selfHole.reset()
+                selfHole.addCircle(me.x, me.y, GameConfig.LIGHT_SELF_RADIUS, Path.Direction.CW)
+                fogPath.op(selfHole, Path.Op.DIFFERENCE)
             } else {
-                canvas.drawCircle(me.x, me.y, 190f, clearPaint)
+                selfHole.reset()
+                selfHole.addCircle(me.x, me.y, 190f, Path.Direction.CW)
+                fogPath.op(selfHole, Path.Op.DIFFERENCE)
             }
         }
-        canvas.restoreToCount(layer)
+        canvas.drawPath(fogPath, fogPaint)
 
         if (me != null && me.alive) {
-            val range = ownLightRange(me)
+            glowPaint.shader = haloGlow
+            canvas.save()
+            canvas.translate(me.x, me.y)
+            canvas.drawCircle(0f, 0f, 85f, glowPaint)
+            canvas.restore()
+            glowPaint.shader = null
             if (me.lightsOn) {
-                glowPaint.shader = RadialGradient(
-                    me.x, me.y, range,
-                    intArrayOf(0x5AFFF1C4, 0x24FFD98A, 0x00FFD98A),
-                    floatArrayOf(0f, 0.55f, 1f),
-                    Shader.TileMode.CLAMP,
-                )
-                canvas.save()
-                canvas.clipPath(lightPath)
-                canvas.drawCircle(me.x, me.y, range, glowPaint)
-                canvas.restore()
-                glowPaint.shader = null
                 for (i in 0 until glintCount) {
                     bulletPaint.color = 0x33FFE0A0
                     canvas.drawCircle(glintX[i], glintY[i], 3.5f, bulletPaint)
                 }
             }
-            glowPaint.shader = RadialGradient(
-                me.x, me.y, 85f,
-                intArrayOf(0x2EFFF1C4, 0x00FFF1C4),
-                floatArrayOf(0f, 1f),
-                Shader.TileMode.CLAMP,
-            )
-            canvas.drawCircle(me.x, me.y, 85f, glowPaint)
-            glowPaint.shader = null
         }
     }
 
@@ -871,22 +909,14 @@ class GameView @JvmOverloads constructor(
         val lastIndex = (rays - 1).toFloat()
         for (i in 0 until rays) {
             val angle = start + span * (i / lastIndex)
-            var hitX = me.x + cos(angle) * range
-            var hitY = me.y + sin(angle) * range
-            var wallHit = false
-            var t = 5f
-            while (t < range) {
-                val x = me.x + cos(angle) * t
-                val y = me.y + sin(angle) * t
-                if (map.blocksLightAtWorld(x, y)) {
-                    hitX = x - cos(angle) * 4f
-                    hitY = y - sin(angle) * 4f
-                    wallHit = true
-                    break
-                }
-                t += 5f
-            }
-            if (wallHit && glintCount < glintX.size) {
+            val c = cos(angle)
+            val s = sin(angle)
+            val hit = map.raycastLight(me.x, me.y, c, s, range)
+            val blocked = hit < range
+            val distance = if (blocked) (hit - 4f).coerceAtLeast(0f) else range
+            val hitX = me.x + c * distance
+            val hitY = me.y + s * distance
+            if (blocked && glintCount < glintX.size) {
                 glintX[glintCount] = hitX
                 glintY[glintCount] = hitY
                 glintCount++
@@ -928,20 +958,11 @@ class GameView @JvmOverloads constructor(
         val span = half * 2f
         for (i in 0 until rays) {
             val angle = start + span * (i / (rays - 1f))
-            var hitX = tank.x + cos(angle) * range
-            var hitY = tank.y + sin(angle) * range
-            var t = 6f
-            while (t < range) {
-                val x = tank.x + cos(angle) * t
-                val y = tank.y + sin(angle) * t
-                if (frame.map.blocksLightAtWorld(x, y)) {
-                    hitX = x - cos(angle) * 3f
-                    hitY = y - sin(angle) * 3f
-                    break
-                }
-                t += 8f
-            }
-            path.lineTo(hitX, hitY)
+            val c = cos(angle)
+            val s = sin(angle)
+            val hit = frame.map.raycastLight(tank.x, tank.y, c, s, range)
+            val distance = if (hit < range) (hit - 3f).coerceAtLeast(0f) else range
+            path.lineTo(tank.x + c * distance, tank.y + s * distance)
         }
         path.close()
     }
@@ -1196,9 +1217,14 @@ class GameView @JvmOverloads constructor(
         if (frame.roundOver) {
             hudPaint.color = 0xB3000000.toInt()
             canvas.drawRect(0f, 0f, w, h, hudPaint)
+            val iWon = if (frame.winnerSlot >= 0) {
+                frame.winnerSlot == frame.mySlot
+            } else {
+                me != null && frame.winnerName == me.name
+            }
             val title = when {
                 frame.winnerName == null -> "НИЧЬЯ"
-                me != null && frame.winnerName == me.name -> "ПОБЕДА!"
+                iWon -> "ПОБЕДА!"
                 else -> "ПОБЕДИЛ: ${frame.winnerName}"
             }
             drawCenteredText(canvas, title, h / 2f - 10f * density, 34f, COLOR_ME)

@@ -51,6 +51,9 @@ class HostRound(
         scope.launch { loop() }
     }
 
+    /** Re-sends the round setup to a client that missed the original broadcast. */
+    internal fun startMessage(): ByteArray = Protocol.startRound(mapId, seed, players)
+
     fun stop() {
         aborted = true
         finished = true
@@ -81,11 +84,20 @@ class HostRound(
                 snapshotEvents.addAll(effects)
             }
 
+            val changes = world.drainTileChanges()
+            if (changes.isNotEmpty()) {
+                var start = 0
+                while (start < changes.size) {
+                    val end = minOf(start + TILE_SYNC_CHUNK, changes.size)
+                    net.broadcastRaw(Protocol.tileSync(changes.subList(start, end)))
+                    start = end
+                }
+            }
+
             frame = buildFrame()
 
             // 30 ticks/s simulation, ~15 snapshots/s: plenty for smooth interpolation.
             if (tick % 2L == 0L) {
-                val changes = world.drainTileChanges()
                 val snapshot = Snapshot(
                     tick = tick,
                     tanks = world.tanks.map {
@@ -109,7 +121,6 @@ class HostRound(
                     zoneRadius = world.zoneRadius,
                     sonarRadius = world.sonarRadius,
                     sonarActive = world.sonarActive,
-                    tileChanges = changes,
                     events = ArrayList(snapshotEvents),
                 )
                 snapshotEvents.clear()
@@ -136,7 +147,7 @@ class HostRound(
             next += tickNanos
             if (now - next > 8 * tickNanos) next = now
         }
-        if (!aborted) net.onHostRoundFinished(world.winnerSlot, world.winnerName)
+        if (!aborted) net.onHostRoundFinished(this, world.winnerSlot, world.winnerName)
     }
 
     private fun buildFrame(): GameFrame {
@@ -176,7 +187,13 @@ class HostRound(
             sonarActive = world.sonarActive,
             roundOver = world.roundOver,
             winnerName = world.winnerName,
+            winnerSlot = world.winnerSlot,
             tick = tick,
         )
+    }
+
+    private companion object {
+        /** Reliable payloads stay small; a long mine chain is split into several messages. */
+        const val TILE_SYNC_CHUNK = 200
     }
 }

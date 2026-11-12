@@ -1,6 +1,7 @@
 package com.fogofwar.game.net
 
 import com.fogofwar.game.core.GameConfig
+import com.fogofwar.game.core.TileChange
 import com.fogofwar.game.core.TileMap
 import com.fogofwar.game.core.lerpAngle
 
@@ -17,6 +18,8 @@ class ClientRound(
     private class Timed(val snapshot: Snapshot, val atMs: Long)
 
     private val buffer = ArrayList<Timed>()
+    private val pendingTileChanges = java.util.concurrent.ConcurrentLinkedQueue<TileChange>()
+    private val playersBySlot: Map<Int, PlayerInfo> = players.associateBy { it.slot }
 
     @Volatile
     private var roundOver = false
@@ -24,8 +27,16 @@ class ClientRound(
     @Volatile
     private var winnerName: String? = null
 
+    @Volatile
+    private var winnerSlot = -1
+
+    /** Last snapshot arrival, used by the host-silence watchdog. */
+    @Volatile
+    var lastSnapshotAt: Long = System.nanoTime() / 1_000_000L
+        private set
+
     fun onSnapshot(snapshot: Snapshot) {
-        for (change in snapshot.tileChanges) map.applyChange(change)
+        lastSnapshotAt = System.nanoTime() / 1_000_000L
         val now = System.nanoTime() / 1_000_000L
         synchronized(buffer) {
             buffer.add(Timed(snapshot, now))
@@ -33,12 +44,26 @@ class ClientRound(
         }
     }
 
-    fun setRoundOver(name: String?) {
+    /** Tile changes arrive as reliable messages; the render thread applies them safely. */
+    fun onTileChanges(changes: List<TileChange>) {
+        for (change in changes) pendingTileChanges.add(change)
+    }
+
+    private fun applyPendingTileChanges() {
+        while (true) {
+            val change = pendingTileChanges.poll() ?: break
+            map.applyChange(change)
+        }
+    }
+
+    fun setRoundOver(slot: Int, name: String?) {
+        winnerSlot = slot
         winnerName = name
         roundOver = true
     }
 
     fun frameAt(nowMs: Long): GameFrame? {
+        applyPendingTileChanges()
         val copy = synchronized(buffer) { ArrayList(buffer) }
         if (copy.isEmpty()) return null
 
@@ -52,7 +77,7 @@ class ClientRound(
 
         val tanks = b.snapshot.tanks.map { tb ->
             val ta = a.snapshot.tanks.firstOrNull { it.slot == tb.slot }
-            val info = players.firstOrNull { it.slot == tb.slot }
+            val info = playersBySlot[tb.slot]
             RenderTank(
                 slot = tb.slot,
                 name = info?.name ?: "?",
@@ -90,6 +115,7 @@ class ClientRound(
             sonarActive = b.snapshot.sonarActive,
             roundOver = roundOver,
             winnerName = winnerName,
+            winnerSlot = winnerSlot,
             tick = b.snapshot.tick,
         )
     }

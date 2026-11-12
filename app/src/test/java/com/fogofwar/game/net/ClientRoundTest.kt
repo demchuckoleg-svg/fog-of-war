@@ -33,7 +33,6 @@ class ClientRoundTest {
                 zoneRadius = 800f,
                 sonarRadius = 0f,
                 sonarActive = false,
-                tileChanges = emptyList(),
                 events = emptyList(),
             )
         )
@@ -61,15 +60,15 @@ class ClientRoundTest {
     }
 
     @Test
-    fun tileChangesAreAppliedToTheClientMap() {
+    fun tileChangesAreAppliedToTheClientMapOnTheRenderThread() {
         val map = MapGenerator.generate(0, 3L)
         map.set(10, 10, Tile.BRICK)
         val round = ClientRound(map, 0, 0, players)
-        round.onSnapshot(
-            snapshotAt(tick = 1, x = 100f, body = 0f, turret = 0f).copy(
-                tileChanges = listOf(TileChange(map.index(10, 10), Tile.CRACKED))
-            )
-        )
+        round.onSnapshot(snapshotAt(tick = 1, x = 100f, body = 0f, turret = 0f))
+        round.onTileChanges(listOf(TileChange(map.index(10, 10), Tile.CRACKED)))
+
+        round.frameAt(System.nanoTime() / 1_000_000L)
+
         assertEquals(Tile.CRACKED, map.tileAt(10, 10))
     }
 
@@ -78,10 +77,11 @@ class ClientRoundTest {
         val map = MapGenerator.generate(0, 4L)
         val round = ClientRound(map, 0, 0, players)
         round.onSnapshot(snapshotAt(tick = 1, x = 100f, body = 0f, turret = 0f))
-        round.setRoundOver("host")
+        round.setRoundOver(0, "host")
         val frame = round.frameAt(System.nanoTime() / 1_000_000L)
         assertTrue(frame!!.roundOver)
         assertEquals("host", frame.winnerName)
+        assertEquals(0, frame.winnerSlot)
     }
 
     private fun snapshotAt(tick: Long, x: Float, body: Float, turret: Float) = Snapshot(
@@ -93,7 +93,6 @@ class ClientRoundTest {
         zoneRadius = 900f,
         sonarRadius = 0f,
         sonarActive = false,
-        tileChanges = emptyList(),
         events = emptyList(),
     )
 

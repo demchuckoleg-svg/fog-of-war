@@ -54,8 +54,17 @@ class GameActivity : AppCompatActivity(), NearbyNet.Listener {
     override fun onResume() {
         super.onResume()
         net.attachListener(this)
+        if (net.roomState != RoomState.IN_GAME) {
+            finish()
+            return
+        }
         binding.gameView.resumeRendering()
-        if (net.roomState != RoomState.IN_GAME) finish()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // Notification shade / system bars: stop driving instead of holding the last stick.
+        if (!hasFocus) binding.gameView.releaseInput()
     }
 
     override fun onPause() {

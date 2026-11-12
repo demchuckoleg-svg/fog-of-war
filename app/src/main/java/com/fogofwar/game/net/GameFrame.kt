@@ -2,7 +2,6 @@ package com.fogofwar.game.net
 
 import com.fogofwar.game.core.EffectEvent
 import com.fogofwar.game.core.GameConfig
-import com.fogofwar.game.core.TileChange
 import com.fogofwar.game.core.TileMap
 
 data class TankSnap(
@@ -40,7 +39,6 @@ data class Snapshot(
     val zoneRadius: Float,
     val sonarRadius: Float,
     val sonarActive: Boolean,
-    val tileChanges: List<TileChange>,
     val events: List<EffectEvent>,
 )
 
@@ -79,6 +77,7 @@ data class GameFrame(
     val sonarActive: Boolean,
     val roundOver: Boolean,
     val winnerName: String?,
+    val winnerSlot: Int = -1,
     val tick: Long,
 ) {
     val me: RenderTank? get() = tanks.firstOrNull { it.slot == mySlot }

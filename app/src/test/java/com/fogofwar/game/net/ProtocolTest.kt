@@ -48,7 +48,6 @@ class ProtocolTest {
             zoneRadius = 900f,
             sonarRadius = 250f,
             sonarActive = true,
-            tileChanges = listOf(TileChange(42, Tile.CRACKED), TileChange(43, Tile.EMPTY)),
             events = listOf(EffectEvent(EffectKind.EXPLOSION, 10f, 20f, 64f)),
         )
         val message = Protocol.parse(Protocol.snapshot(snapshot))
@@ -72,11 +71,58 @@ class ProtocolTest {
         assertTrue(parsed.mines[0].armed)
         assertEquals(900f, parsed.zoneRadius, 0.001f)
         assertTrue(parsed.sonarActive)
-        assertEquals(Tile.CRACKED, parsed.tileChanges[0].tile)
-        assertEquals(43, parsed.tileChanges[1].index)
         assertEquals(1, parsed.events.size)
         assertEquals(EffectKind.EXPLOSION, parsed.events[0].kind)
         assertEquals(64f, parsed.events[0].radius, 0.001f)
+    }
+
+    @Test
+    fun tileSyncRoundTripsHundredsOfChanges() {
+        // More than the old single-byte counter could express: must not wrap or corrupt.
+        val changes = (0 until 300).map { TileChange(it, if (it % 2 == 0) Tile.CRACKED else Tile.EMPTY) }
+
+        val message = Protocol.parse(Protocol.tileSync(changes))
+
+        assertTrue(message is NetMessage.TileSync)
+        val parsed = (message as NetMessage.TileSync).changes
+        assertEquals(300, parsed.size)
+        assertEquals(299, parsed.last().index)
+        assertEquals(Tile.EMPTY, parsed.last().tile)
+    }
+
+    @Test
+    fun snapshotHandlesHundredsOfEvents() {
+        val events = (0 until 300).map {
+            EffectEvent(EffectKind.SHOT, it.toFloat(), it.toFloat() * 2, 0f)
+        }
+        val snapshot = Snapshot(
+            tick = 7,
+            tanks = emptyList(),
+            bullets = (0 until 300).map { BulletSnap(it.toFloat(), it.toFloat()) },
+            pickups = emptyList(),
+            mines = emptyList(),
+            zoneRadius = 500f,
+            sonarRadius = 0f,
+            sonarActive = false,
+            events = events,
+        )
+
+        val parsed = (Protocol.parse(Protocol.snapshot(snapshot)) as NetMessage.SnapshotMsg).snapshot
+
+        assertEquals(300, parsed.bullets.size)
+        assertEquals(300, parsed.events.size)
+        assertEquals(299f, parsed.events.last().x, 0.001f)
+    }
+
+    @Test
+    fun helloAndWelcomeCarryProtocolVersion() {
+        val hello = Protocol.parse(Protocol.hello("Олег")) as NetMessage.Hello
+        assertEquals("Олег", hello.name)
+        assertEquals(Protocol.VERSION, hello.version)
+
+        val welcome = Protocol.parse(Protocol.welcome(3)) as NetMessage.Welcome
+        assertEquals(3, welcome.slot)
+        assertEquals(Protocol.VERSION, welcome.version)
     }
 
     @Test

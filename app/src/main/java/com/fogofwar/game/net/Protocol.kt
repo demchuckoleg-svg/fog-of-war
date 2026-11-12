@@ -60,8 +60,8 @@ data class LobbyUiState(
 }
 
 sealed class NetMessage {
-    data class Hello(val name: String) : NetMessage()
-    data class Welcome(val slot: Int) : NetMessage()
+    data class Hello(val name: String, val version: Int = Protocol.VERSION) : NetMessage()
+    data class Welcome(val slot: Int, val version: Int = Protocol.VERSION) : NetMessage()
     data class Roster(val roomState: RoomState, val mapId: Int, val players: List<PlayerInfo>) : NetMessage()
     data class StartRound(val mapId: Int, val seed: Long, val players: List<PlayerInfo>) : NetMessage()
     data class InputMsg(
@@ -75,6 +75,7 @@ sealed class NetMessage {
         val dropMine: Boolean,
     ) : NetMessage()
     data class SnapshotMsg(val snapshot: Snapshot) : NetMessage()
+    data class TileSync(val changes: List<TileChange>) : NetMessage()
     data class RoundOver(val winnerSlot: Int, val winnerName: String, val players: List<PlayerInfo>) : NetMessage()
     data class MapSelect(val mapId: Int) : NetMessage()
     data class RoomClosed(val reason: String) : NetMessage()
@@ -82,7 +83,7 @@ sealed class NetMessage {
 
 /** Binary wire protocol. Bump VERSION + SERVICE_ID when the format changes. */
 object Protocol {
-    const val VERSION = 3
+    const val VERSION = 4
 
     private const val MSG_HELLO = 1
     private const val MSG_WELCOME = 2
@@ -93,16 +94,21 @@ object Protocol {
     private const val MSG_ROUND_OVER = 7
     private const val MSG_MAP_SELECT = 8
     private const val MSG_ROOM_CLOSED = 9
+    private const val MSG_TILE_SYNC = 10
 
     private const val INPUT_FIRE = 1
     private const val INPUT_LIGHTS = 2
     private const val INPUT_DROP = 4
+
+    /** Nicknames are capped well below this; the limit only protects the buffer. */
+    private const val MAX_STRING_BYTES = 64
 
     // ---------------------------------------------------------------- encoding
 
     fun hello(name: String): ByteArray {
         val b = ByteBuffer.allocate(256)
         b.put(MSG_HELLO.toByte())
+        b.put(VERSION.toByte())
         putString(b, name)
         return finish(b)
     }
@@ -110,12 +116,13 @@ object Protocol {
     fun welcome(slot: Int): ByteArray {
         val b = ByteBuffer.allocate(8)
         b.put(MSG_WELCOME.toByte())
+        b.put(VERSION.toByte())
         b.put(slot.toByte())
         return finish(b)
     }
 
     fun roster(state: RoomState, mapId: Int, players: List<PlayerInfo>): ByteArray {
-        val b = ByteBuffer.allocate(512)
+        val b = ByteBuffer.allocate(64 + players.size * 72)
         b.put(MSG_ROSTER.toByte())
         b.put(state.ordinal.toByte())
         b.put(mapId.toByte())
@@ -124,7 +131,7 @@ object Protocol {
     }
 
     fun startRound(mapId: Int, seed: Long, players: List<PlayerInfo>): ByteArray {
-        val b = ByteBuffer.allocate(512)
+        val b = ByteBuffer.allocate(80 + players.size * 72)
         b.put(MSG_START.toByte())
         b.put(mapId.toByte())
         b.putLong(seed)
@@ -158,18 +165,17 @@ object Protocol {
     }
 
     fun snapshot(snapshot: Snapshot): ByteArray {
-        val size = 160 +
-            snapshot.tanks.size * 33 +
-            snapshot.bullets.size * 10 +
-            snapshot.pickups.size * 12 +
-            snapshot.mines.size * 12 +
-            snapshot.tileChanges.size * 4 +
-            snapshot.events.size * 16
+        val size = 24 +
+            snapshot.tanks.size * 22 +
+            snapshot.bullets.size * 8 +
+            snapshot.pickups.size * 9 +
+            snapshot.mines.size * 10 +
+            snapshot.events.size * 13
         val b = ByteBuffer.allocate(size)
         b.put(MSG_SNAPSHOT.toByte())
         b.putInt(snapshot.tick.toInt())
 
-        b.put(snapshot.tanks.size.toByte())
+        b.putShort(snapshot.tanks.size.toShort())
         for (t in snapshot.tanks) {
             b.put(t.slot.toByte())
             b.putFloat(t.x)
@@ -183,20 +189,20 @@ object Protocol {
             b.put((t.mineRecharge.coerceIn(0f, 1f) * 255f).toInt().toByte())
         }
 
-        b.put(snapshot.bullets.size.toByte())
+        b.putShort(snapshot.bullets.size.toShort())
         for (bullet in snapshot.bullets) {
             b.putFloat(bullet.x)
             b.putFloat(bullet.y)
         }
 
-        b.put(snapshot.pickups.size.toByte())
+        b.putShort(snapshot.pickups.size.toShort())
         for (pickup in snapshot.pickups) {
             b.put(pickup.type.toByte())
             b.putFloat(pickup.x)
             b.putFloat(pickup.y)
         }
 
-        b.put(snapshot.mines.size.toByte())
+        b.putShort(snapshot.mines.size.toShort())
         for (mine in snapshot.mines) {
             b.putFloat(mine.x)
             b.putFloat(mine.y)
@@ -208,13 +214,7 @@ object Protocol {
         b.putFloat(snapshot.sonarRadius)
         b.put(if (snapshot.sonarActive) 1 else 0)
 
-        b.put(snapshot.tileChanges.size.toByte())
-        for (change in snapshot.tileChanges) {
-            b.putShort(change.index.toShort())
-            b.put(change.tile.ordinal.toByte())
-        }
-
-        b.put(snapshot.events.size.toByte())
+        b.putShort(snapshot.events.size.toShort())
         for (event in snapshot.events) {
             b.put(event.kind.ordinal.toByte())
             b.putFloat(event.x)
@@ -224,8 +224,23 @@ object Protocol {
         return finish(b)
     }
 
+    /**
+     * Tile changes travel separately from snapshots: one bad snapshot can never lose a
+     * piece of the map, and a long mine chain can be split into several reliable messages.
+     */
+    fun tileSync(changes: List<TileChange>): ByteArray {
+        val b = ByteBuffer.allocate(3 + changes.size * 3)
+        b.put(MSG_TILE_SYNC.toByte())
+        b.putShort(changes.size.toShort())
+        for (change in changes) {
+            b.putShort(change.index.toShort())
+            b.put(change.tile.ordinal.toByte())
+        }
+        return finish(b)
+    }
+
     fun roundOver(winnerSlot: Int, winnerName: String, players: List<PlayerInfo>): ByteArray {
-        val b = ByteBuffer.allocate(512)
+        val b = ByteBuffer.allocate(96 + players.size * 72)
         b.put(MSG_ROUND_OVER.toByte())
         b.put(winnerSlot.toByte())
         putString(b, winnerName)
@@ -253,8 +268,14 @@ object Protocol {
         return try {
             val b = ByteBuffer.wrap(bytes)
             when (b.get().toInt() and 0xFF) {
-                MSG_HELLO -> NetMessage.Hello(readString(b))
-                MSG_WELCOME -> NetMessage.Welcome(b.get().toInt() and 0xFF)
+                MSG_HELLO -> {
+                    val version = b.get().toInt() and 0xFF
+                    NetMessage.Hello(name = readString(b), version = version)
+                }
+                MSG_WELCOME -> {
+                    val version = b.get().toInt() and 0xFF
+                    NetMessage.Welcome(slot = b.get().toInt() and 0xFF, version = version)
+                }
                 MSG_ROSTER -> {
                     val state = readRoomState(b.get().toInt() and 0xFF)
                     val mapId = b.get().toInt() and 0xFF
@@ -284,6 +305,7 @@ object Protocol {
                     )
                 }
                 MSG_SNAPSHOT -> NetMessage.SnapshotMsg(readSnapshot(b))
+                MSG_TILE_SYNC -> NetMessage.TileSync(readTileChanges(b))
                 MSG_ROUND_OVER -> NetMessage.RoundOver(
                     b.get().toInt(),
                     readString(b),
@@ -301,7 +323,7 @@ object Protocol {
     private fun readSnapshot(b: ByteBuffer): Snapshot {
         val tick = b.int.toLong()
 
-        val tankCount = b.get().toInt() and 0xFF
+        val tankCount = b.short.toInt() and 0xFFFF
         val tanks = ArrayList<TankSnap>(tankCount)
         repeat(tankCount) {
             tanks.add(
@@ -320,19 +342,19 @@ object Protocol {
             )
         }
 
-        val bulletCount = b.get().toInt() and 0xFF
+        val bulletCount = b.short.toInt() and 0xFFFF
         val bullets = ArrayList<BulletSnap>(bulletCount)
         repeat(bulletCount) {
             bullets.add(BulletSnap(b.float, b.float))
         }
 
-        val pickupCount = b.get().toInt() and 0xFF
+        val pickupCount = b.short.toInt() and 0xFFFF
         val pickups = ArrayList<PickupSnap>(pickupCount)
         repeat(pickupCount) {
             pickups.add(PickupSnap(b.get().toInt() and 0xFF, b.float, b.float))
         }
 
-        val mineCount = b.get().toInt() and 0xFF
+        val mineCount = b.short.toInt() and 0xFFFF
         val mines = ArrayList<MineSnap>(mineCount)
         repeat(mineCount) {
             mines.add(MineSnap(b.float, b.float, b.get().toInt() != 0, b.get().toInt() and 0xFF))
@@ -342,15 +364,7 @@ object Protocol {
         val sonarRadius = b.float
         val sonarActive = b.get().toInt() != 0
 
-        val changeCount = b.get().toInt() and 0xFF
-        val changes = ArrayList<TileChange>(changeCount)
-        repeat(changeCount) {
-            val index = b.short.toInt() and 0xFFFF
-            val tile = Tile.fromOrdinal(b.get().toInt() and 0xFF)
-            changes.add(TileChange(index, tile))
-        }
-
-        val eventCount = b.get().toInt() and 0xFF
+        val eventCount = b.short.toInt() and 0xFFFF
         val events = ArrayList<EffectEvent>(eventCount)
         repeat(eventCount) {
             val kind = EffectKind.values().getOrElse(b.get().toInt() and 0xFF) { EffectKind.SHOT }
@@ -369,18 +383,26 @@ object Protocol {
             zoneRadius = zoneRadius,
             sonarRadius = sonarRadius,
             sonarActive = sonarActive,
-            tileChanges = changes,
             events = events,
         )
+    }
+
+    private fun readTileChanges(b: ByteBuffer): List<TileChange> {
+        val count = b.short.toInt() and 0xFFFF
+        val changes = ArrayList<TileChange>(count)
+        repeat(count) {
+            val index = b.short.toInt() and 0xFFFF
+            changes.add(TileChange(index, Tile.fromOrdinal(b.get().toInt() and 0xFF)))
+        }
+        return changes
     }
 
     private fun readRoomState(ordinal: Int): RoomState =
         RoomState.values().getOrElse(ordinal) { RoomState.IDLE }
 
     private fun putPlayers(b: ByteBuffer, players: List<PlayerInfo>) {
-        val list = players.take(16)
-        b.put(list.size.toByte())
-        for (p in list) {
+        b.put(players.size.toByte())
+        for (p in players) {
             b.put(p.slot.toByte())
             putString(b, p.name)
             b.putShort(p.wins.toShort())
@@ -402,10 +424,15 @@ object Protocol {
     }
 
     private fun putString(b: ByteBuffer, value: String) {
-        val data = value.toByteArray(Charsets.UTF_8)
-        val size = data.size.coerceAtMost(64)
-        b.putShort(size.toShort())
-        b.put(data, 0, size)
+        var text = value
+        var data = text.toByteArray(Charsets.UTF_8)
+        // Never cut a multi-byte character in half: trim whole code points instead.
+        while (data.size > MAX_STRING_BYTES && text.isNotEmpty()) {
+            text = text.substring(0, text.offsetByCodePoints(text.length, -1))
+            data = text.toByteArray(Charsets.UTF_8)
+        }
+        b.putShort(data.size.toShort())
+        b.put(data)
     }
 
     private fun readString(b: ByteBuffer): String {
