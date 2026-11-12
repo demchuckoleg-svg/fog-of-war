@@ -35,7 +35,7 @@ class BotController(private val slot: Int, private val rng: Rng) {
             val dy = candidate.y - me.y
             val dist = hypot(dx, dy)
             if (dist < 110f) true
-            else dist < 360f && Math.abs(angleDelta(me.bodyDir, atan2(dy, dx))) < 1.1f
+            else dist < 360f && Math.abs(angleDelta(me.turretDir, atan2(dy, dx))) < 1.1f
         }
         val outside = hypot(me.x - cx, me.y - cy) > world.zoneRadius - 90f
         retargetIn -= dt

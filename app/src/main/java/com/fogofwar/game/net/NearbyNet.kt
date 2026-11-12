@@ -83,6 +83,7 @@ class NearbyNet(context: Context) {
     private var status: String? = null
     private var inputSeq = 0
     private var sessionGeneration = 0
+    private var lastRoundMapId = -1
     private val effectQueue = java.util.concurrent.ConcurrentLinkedQueue<EffectEvent>()
 
     // ------------------------------------------------------------- public API
@@ -90,6 +91,12 @@ class NearbyNet(context: Context) {
     fun updateNickname(name: String) {
         nickname = name.trim().ifBlank { "Танк" }.take(16)
         humans[0]?.let { humans[0] = it.copy(name = nickname) }
+        when {
+            isHost && roomState != RoomState.IDLE -> broadcastRoster()
+            !isHost && roomState == RoomState.LOBBY -> hostEndpoint?.let {
+                sendRaw(it, Protocol.hello(nickname))
+            }
+        }
     }
 
     fun attachListener(l: Listener?) {
@@ -108,6 +115,7 @@ class NearbyNet(context: Context) {
         resetToIdle(notify = false)
         isHost = true
         mySlot = 0
+        lastRoundMapId = -1
         roomState = RoomState.HOSTING
         mapId = 0
         status = null
@@ -169,13 +177,16 @@ class NearbyNet(context: Context) {
         if (players.size == 1) {
             for (i in 1..4) players.add(PlayerInfo(i, "Бот $i", 0, true))
         }
+        val roundMapId = nextRoundMapId()
+        lastRoundMapId = roundMapId
+        mapId = roundMapId
         val seed = GameConfig.MAP_SEED
         roomState = RoomState.IN_GAME
         lastWinner = null
         status = null
         client?.stopAdvertising()
-        broadcastRaw(Protocol.startRound(mapId, seed, players))
-        val round = HostRound(this, mapId, seed, players)
+        broadcastRaw(Protocol.startRound(roundMapId, seed, players))
+        val round = HostRound(this, roundMapId, seed, players)
         hostRound = round
         round.start()
         listener?.onRoundStarted(mapId)
@@ -289,6 +300,15 @@ class NearbyNet(context: Context) {
         }
     }
 
+    /** Round 1 uses the host's lobby choice; every next round is guaranteed to be a different map. */
+    private fun nextRoundMapId(): Int {
+        val count = MapGenerator.MAP_NAMES.size
+        if (lastRoundMapId < 0) return mapId
+        if (mapId != lastRoundMapId) return mapId
+        val candidates = (0 until count).filter { it != lastRoundMapId }
+        return candidates[kotlin.random.Random.nextInt(candidates.size)]
+    }
+
     internal fun broadcastRaw(bytes: ByteArray) {
         for (endpointId in slotByEndpoint.keys.toList()) {
             sendRaw(endpointId, bytes)
@@ -337,6 +357,7 @@ class NearbyNet(context: Context) {
         discovered.clear()
         roomState = RoomState.IDLE
         mySlot = 0
+        lastRoundMapId = -1
         lastWinner = null
         status = null
         effectQueue.clear()

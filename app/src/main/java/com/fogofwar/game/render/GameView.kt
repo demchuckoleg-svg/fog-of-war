@@ -12,6 +12,7 @@ import android.graphics.Shader
 import android.graphics.Typeface
 import android.os.SystemClock
 import android.util.AttributeSet
+import android.util.Log
 import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -245,7 +246,10 @@ class GameView @JvmOverloads constructor(
                     holder.unlockCanvasAndPost(canvas)
                 }
             } catch (t: Throwable) {
-                if (running && t !is IllegalStateException) pauseRendering()
+                if (running && t !is IllegalStateException) {
+                    Log.e("GameView", "render loop failed", t)
+                    pauseRendering()
+                }
             }
             val elapsedMs = (System.nanoTime() - frameStart) / 1_000_000L
             if (elapsedMs < 16L) SystemClock.sleep(16L - elapsedMs)

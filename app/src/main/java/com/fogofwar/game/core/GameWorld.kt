@@ -153,12 +153,14 @@ class GameWorld(
         tank.lightTime = max(0f, tank.lightTime - dt)
         tank.dropCooldown = max(0f, tank.dropCooldown - dt)
         tank.lightsOn = input.lights
-        tank.moving = input.isMoving
         if (!tank.alive) {
+            tank.moving = false
             previousDrop[tank.slot] = input.dropMine
             return
         }
 
+        val startX = tank.x
+        val startY = tank.y
         val move = input.clamped()
         val moveLen = hypot(move.moveX, move.moveY)
         if (moveLen > 0.08f) {
@@ -175,6 +177,8 @@ class GameWorld(
             tank.x = tank.x.coerceIn(GameConfig.TILE, GameConfig.WORLD_SIZE - GameConfig.TILE)
             tank.y = tank.y.coerceIn(GameConfig.TILE, GameConfig.WORLD_SIZE - GameConfig.TILE)
         }
+        // Sonar stealth and tread animation use real displacement, not a stick held against a wall.
+        tank.moving = hypot(tank.x - startX, tank.y - startY) > 0.5f
 
         // Hull-independent turret: aim stick wins, otherwise lazily recenters while driving.
         if (move.hasAim) {
@@ -374,6 +378,7 @@ class GameWorld(
             val x = (tx + 0.5f) * GameConfig.TILE
             val y = (ty + 0.5f) * GameConfig.TILE
             if (!map.isFreeForTankBox(x, y, 12f)) continue
+            if (hypot(x - centerX, y - centerY) > (zoneRadius * 0.8f).coerceAtLeast(140f)) continue
             if (tanks.any { it.distanceTo(x, y) < 170f }) continue
             if (pickups.any { hypot(it.x - x, it.y - y) < 150f }) continue
             if (mines.any { hypot(it.x - x, it.y - y) < 90f }) continue

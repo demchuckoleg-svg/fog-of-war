@@ -103,6 +103,34 @@ class GameWorldTest {
     }
 
     @Test
+    fun heldStickAgainstWallIsNotMoving() {
+        val world = GameWorld(MapGenerator.generate(0, 41L), 0, 41L)
+        val tank = world.addPlayer(0, "wall")
+        world.addPlayer(1, "other")
+        tank.x = GameConfig.TILE + GameConfig.TANK_HALF + 1f
+        tank.y = 1024f
+        assertTrue(world.map.isFreeForTankBox(tank.x, tank.y, GameConfig.TANK_HALF))
+        world.setInput(0, TankInput(moveX = -1f))
+        repeat(10) { world.step(GameConfig.TICK_DT) }
+        assertFalse(tank.moving)
+    }
+
+    @Test
+    fun pickupsSpawnInsideSafeZone() {
+        val world = GameWorld(MapGenerator.generate(2, 43L), 2, 43L)
+        world.addPlayer(0, "a")
+        world.addPlayer(1, "b")
+        repeat(20 * GameConfig.TICK_HZ) { world.step(GameConfig.TICK_DT) }
+        assertTrue(world.pickups.isNotEmpty())
+        for (pickup in world.pickups) {
+            assertTrue(
+                "pickup outside zone",
+                hypot(pickup.x - world.centerX, pickup.y - world.centerY) <= world.zoneRadius,
+            )
+        }
+    }
+
+    @Test
     fun disconnectLeavesSurvivorAsWinner() {
         val world = GameWorld(MapGenerator.generate(3, 31L), 3, 31L)
         world.addPlayer(0, "survivor")
