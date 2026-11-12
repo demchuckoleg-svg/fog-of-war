@@ -95,10 +95,20 @@ class GameView @JvmOverloads constructor(
     private var joyRadius = 0f
     private var joyKnobRadius = 0f
     private var fireRadius = 0f
-    private var fireX = 0f
-    private var fireY = 0f
 
     private var hintUntil = 0L
+
+    @Volatile private var safeLeft = 0
+    @Volatile private var safeTop = 0
+    @Volatile private var safeRight = 0
+    @Volatile private var safeBottom = 0
+
+    fun setSafeInsets(left: Int, top: Int, right: Int, bottom: Int) {
+        safeLeft = left
+        safeTop = top
+        safeRight = right
+        safeBottom = bottom
+    }
 
     init {
         holder.addCallback(this)
@@ -260,8 +270,6 @@ class GameView @JvmOverloads constructor(
         joyRadius = 74f * density
         joyKnobRadius = 30f * density
         fireRadius = 58f * density
-        fireX = w - 92f * density
-        fireY = h - 92f * density
         joyBaseX = 104f * density
         joyBaseY = h - 104f * density
         joyKnobX = joyBaseX
@@ -527,15 +535,17 @@ class GameView @JvmOverloads constructor(
         val w = canvas.width.toFloat()
         val h = canvas.height.toFloat()
         val me = frame.me
+        val hudLeft = safeLeft + 20f * density
+        val hudTop = safeTop + 20f * density
 
         // HP pips.
         val pipW = 30f * density
         val pipH = 13f * density
         for (i in 0 until GameConfig.MAX_HP) {
-            val left = 20f * density + i * (pipW + 7f * density)
+            val left = hudLeft + i * (pipW + 7f * density)
             hudPaint.color = if (i < (me?.hp ?: 0)) COLOR_HP else 0x33FF5252
             canvas.drawRoundRect(
-                RectF(left, 20f * density, left + pipW, 20f * density + pipH),
+                RectF(left, hudTop, left + pipW, hudTop + pipH),
                 4f * density,
                 4f * density,
                 hudPaint,
@@ -546,11 +556,11 @@ class GameView @JvmOverloads constructor(
         textPaint.color = COLOR_DIM
         val alive = frame.tanks.count { it.alive }
         val total = frame.tanks.size
-        canvas.drawText("В ЖИВЫХ $alive / $total", 20f * density, 56f * density, textPaint)
+        canvas.drawText("В ЖИВЫХ $alive / $total", hudLeft, hudTop + 36f * density, textPaint)
 
         // Joystick.
-        val baseX = if (joyActive) joyBaseX else joyBaseX
-        val baseY = if (joyActive) joyBaseY else joyBaseY
+        val baseX = if (joyActive) joyBaseX else safeLeft + 104f * density
+        val baseY = if (joyActive) joyBaseY else h - safeBottom - 104f * density
         val knobX = if (joyActive) joyKnobX else baseX
         val knobY = if (joyActive) joyKnobY else baseY
         hudPaint.color = 0x22FFFFFF
@@ -563,13 +573,15 @@ class GameView @JvmOverloads constructor(
         canvas.drawCircle(knobX, knobY, joyKnobRadius, hudPaint)
 
         // Fire button.
+        val fx = w - safeRight - 92f * density
+        val fy = h - safeBottom - 92f * density
         hudPaint.color = if (firing) 0x99FF5252.toInt() else 0x33FF5252
-        canvas.drawCircle(fireX, fireY, fireRadius, hudPaint)
+        canvas.drawCircle(fx, fy, fireRadius, hudPaint)
         strokePaint.color = if (firing) 0xFFFF8080.toInt() else 0x66FF8080
         strokePaint.strokeWidth = 2.5f * density
-        canvas.drawCircle(fireX, fireY, fireRadius, strokePaint)
+        canvas.drawCircle(fx, fy, fireRadius, strokePaint)
         hudPaint.color = if (firing) 0xFFFFFFFF.toInt() else 0xB3FFFFFF.toInt()
-        canvas.drawCircle(fireX, fireY, fireRadius * 0.42f, hudPaint)
+        canvas.drawCircle(fx, fy, fireRadius * 0.42f, hudPaint)
 
         // Arrow to the safe zone when outside.
         if (me != null && me.alive) {
@@ -580,7 +592,7 @@ class GameView @JvmOverloads constructor(
                     GameConfig.WORLD_SIZE / 2f - me.x,
                 )
                 canvas.save()
-                canvas.translate(w / 2f, h - 34f * density)
+                canvas.translate(w / 2f, h - safeBottom - 34f * density)
                 canvas.rotate(Math.toDegrees(angle.toDouble()).toFloat() + 90f)
                 arrowPath.reset()
                 arrowPath.moveTo(0f, -16f * density)
@@ -593,7 +605,7 @@ class GameView @JvmOverloads constructor(
                 textPaint.textAlign = Paint.Align.CENTER
                 textPaint.textSize = 12f * scaledDensity
                 textPaint.color = 0xCCFF8A8A.toInt()
-                canvas.drawText("ВНЕ ЗОНЫ", w / 2f, h - 62f * density, textPaint)
+                canvas.drawText("ВНЕ ЗОНЫ", w / 2f, h - safeBottom - 62f * density, textPaint)
             }
         }
 
@@ -608,7 +620,7 @@ class GameView @JvmOverloads constructor(
             textPaint.textAlign = Paint.Align.CENTER
             textPaint.textSize = 13f * scaledDensity
             textPaint.color = ((alpha * 210).toInt() shl 24) or 0x00E6ECE9
-            canvas.drawText("джойстик — левая половина · огонь — правая", w / 2f, 88f * density, textPaint)
+            canvas.drawText("джойстик — левая половина · огонь — правая", w / 2f, safeTop + 88f * density, textPaint)
         }
 
         if (frame.roundOver) {

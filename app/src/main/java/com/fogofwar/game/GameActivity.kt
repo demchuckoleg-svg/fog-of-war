@@ -8,10 +8,12 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.view.ViewCompat
 import com.fogofwar.game.databinding.ActivityGameBinding
 import com.fogofwar.game.net.LobbyUiState
 import com.fogofwar.game.net.NearbyNet
 import com.fogofwar.game.net.RoomState
+import com.fogofwar.game.render.GameView
 
 class GameActivity : AppCompatActivity(), NearbyNet.Listener {
 
@@ -34,6 +36,14 @@ class GameActivity : AppCompatActivity(), NearbyNet.Listener {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() = leave()
         })
+
+        ViewCompat.setOnApplyWindowInsetsListener(binding.gameView) { view, insets ->
+            val cut = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            (view as GameView).setSafeInsets(cut.left, cut.top, cut.right, cut.bottom)
+            insets
+        }
     }
 
     private fun leave() {

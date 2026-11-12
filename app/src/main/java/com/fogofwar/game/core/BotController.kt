@@ -29,7 +29,14 @@ class BotController(private val slot: Int, private val rng: Rng) {
 
         val cx = GameConfig.WORLD_SIZE / 2f
         val cy = cx
-        val enemy = world.nearestEnemy(me, 640f)
+        // Bots respect the same fog as humans: they only notice enemies in front of them.
+        val enemy = world.nearestEnemy(me, 700f)?.takeIf { candidate ->
+            val dx = candidate.x - me.x
+            val dy = candidate.y - me.y
+            val dist = hypot(dx, dy)
+            if (dist < 110f) true
+            else dist < 360f && Math.abs(angleDelta(me.dir, atan2(dy, dx))) < 1.1f
+        }
         val outside = hypot(me.x - cx, me.y - cy) > world.zoneRadius - 90f
         retargetIn -= dt
 
