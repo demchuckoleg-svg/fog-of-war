@@ -51,8 +51,10 @@ class NearbyNet(context: Context) {
     private val mainHandler = Handler(Looper.getMainLooper())
 
     var nickname: String = "Танк"
+    @Volatile
     var isHost: Boolean = false
         private set
+    @Volatile
     var roomState: RoomState = RoomState.IDLE
         private set
     var mySlot: Int = 0
@@ -61,8 +63,10 @@ class NearbyNet(context: Context) {
         private set
     var listener: Listener? = null
 
+    @Volatile
     var hostRound: HostRound? = null
         private set
+    @Volatile
     var clientRound: ClientRound? = null
         private set
     var lastWinner: String? = null
@@ -73,6 +77,7 @@ class NearbyNet(context: Context) {
     private val slotByEndpoint = HashMap<String, Int>()
     private val pendingNames = HashMap<String, String>()
     private val discovered = LinkedHashMap<String, String>()
+    @Volatile
     private var hostEndpoint: String? = null
     private var status: String? = null
     private var inputSeq = 0
