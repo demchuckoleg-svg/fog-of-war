@@ -18,9 +18,9 @@ object GameConfig {
     /** How fast the hull visually turns toward the movement stick. */
     const val BODY_TURN_SPEED = 9f
     /** Turret tracking speed while the aim stick is held. */
-    const val TURRET_TURN_SPEED = 13f
+    const val TURRET_TURN_SPEED = 10f
     /** Turret lazily recenters to the hull when driving without aiming. */
-    const val TURRET_IDLE_TURN_SPEED = 2.5f
+    const val TURRET_IDLE_TURN_SPEED = 2.2f
 
     const val BULLET_SPEED = 430f
     const val BULLET_SPEED_POWER = 620f
@@ -32,9 +32,7 @@ object GameConfig {
     const val MAX_HP = 3
     const val INVULN_TIME = 0.65f
 
-    /** Right stick: above this magnitude the cannon fires automatically. */
-    const val AIM_FIRE_THRESHOLD = 0.72f
-    const val AIM_DEADZONE = 0.15f
+    const val AIM_DEADZONE = 0.22f
 
     /** Zone is a circle around the map centre. */
     const val ZONE_START_RADIUS = 1460f

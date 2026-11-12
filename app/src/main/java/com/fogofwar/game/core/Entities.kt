@@ -6,7 +6,7 @@ import kotlin.math.hypot
 /**
  * Input coming from two sticks and the action buttons.
  * moveX/moveY drive the hull, aimX/aimY rotate the turret and headlight.
- * aim magnitude is preserved: > AIM_FIRE_THRESHOLD means "shoot" on the client.
+ * aim magnitude is preserved (0..1); the client fires only when the stick reaches the ring.
  */
 data class TankInput(
     val moveX: Float = 0f,

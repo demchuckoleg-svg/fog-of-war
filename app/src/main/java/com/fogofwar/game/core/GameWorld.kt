@@ -182,7 +182,13 @@ class GameWorld(
 
         // Hull-independent turret: aim stick wins, otherwise lazily recenters while driving.
         if (move.hasAim) {
-            tank.turretDir = lerpAngle(tank.turretDir, move.aimAngle(), dt * GameConfig.TURRET_TURN_SPEED)
+            // Less sensitive near the centre: small deflections turn the turret slowly.
+            val responsiveness = 0.4f + 0.6f * move.aimMagnitude.coerceIn(0f, 1f)
+            tank.turretDir = lerpAngle(
+                tank.turretDir,
+                move.aimAngle(),
+                dt * GameConfig.TURRET_TURN_SPEED * responsiveness,
+            )
         } else if (moveLen > 0.08f) {
             tank.turretDir = lerpAngle(tank.turretDir, tank.bodyDir, dt * GameConfig.TURRET_IDLE_TURN_SPEED)
         }

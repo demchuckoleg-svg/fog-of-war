@@ -117,6 +117,7 @@ class GameView @JvmOverloads constructor(
     @Volatile private var moveKnobY = 0f
 
     @Volatile private var aimActive = false
+    @Volatile private var aimAtEdge = false
     @Volatile private var aimBaseX = 0f
     @Volatile private var aimBaseY = 0f
     @Volatile private var aimKnobX = 0f
@@ -223,11 +224,10 @@ class GameView @JvmOverloads constructor(
 
                 if (now - lastInput >= 50L) {
                     lastInput = now
-                    val autoFire = hypot(aimX, aimY) >= GameConfig.AIM_FIRE_THRESHOLD
                     val dropRequested = dropMineRequest
                     net.sendInput(
                         moveX, moveY, aimX, aimY,
-                        fire = firing || autoFire,
+                        fire = firing || aimAtEdge,
                         lights = lightsOn,
                         dropMine = dropRequested,
                     )
@@ -315,6 +315,7 @@ class GameView @JvmOverloads constructor(
         } else if (x >= width / 2f && aimPointerId == -1) {
             aimPointerId = id
             aimActive = true
+            aimAtEdge = false
             aimBaseX = x
             aimBaseY = y
             aimKnobX = x
@@ -336,10 +337,11 @@ class GameView @JvmOverloads constructor(
             if (index >= 0) {
                 var dx = event.getX(index) - aimBaseX
                 var dy = event.getY(index) - aimBaseY
-                val len = hypot(dx, dy)
-                if (len > aimRadius) {
-                    dx = dx / len * aimRadius
-                    dy = dy / len * aimRadius
+                val rawLen = hypot(dx, dy)
+                aimAtEdge = rawLen >= aimRadius - 0.5f
+                if (rawLen > aimRadius) {
+                    dx = dx / rawLen * aimRadius
+                    dy = dy / rawLen * aimRadius
                 }
                 aimKnobX = aimBaseX + dx
                 aimKnobY = aimBaseY + dy
@@ -388,6 +390,7 @@ class GameView @JvmOverloads constructor(
         if (id == aimPointerId) {
             aimPointerId = -1
             aimActive = false
+            aimAtEdge = false
             aimX = 0f
             aimY = 0f
         }
@@ -405,6 +408,7 @@ class GameView @JvmOverloads constructor(
         minePointerId = -1
         moveActive = false
         aimActive = false
+        aimAtEdge = false
         moveX = 0f
         moveY = 0f
         aimX = 0f
@@ -415,10 +419,10 @@ class GameView @JvmOverloads constructor(
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        moveRadius = 74f * density
-        moveKnobRadius = 30f * density
-        aimRadius = 66f * density
-        aimKnobRadius = 26f * density
+        moveRadius = 58f * density
+        moveKnobRadius = 24f * density
+        aimRadius = 50f * density
+        aimKnobRadius = 21f * density
         fireRadius = 58f * density
         mineRadius = 36f * density
         lightRadius = 24f * density
@@ -929,15 +933,14 @@ class GameView @JvmOverloads constructor(
         strokePaint.color = if (aimActive) 0x6657D68B else 0x2E57D68B
         strokePaint.strokeWidth = 2f * density
         canvas.drawCircle(aimBaseXDraw, aimBaseYDraw, aimRadius, strokePaint)
-        hudPaint.color = if (aimActive && hypot(aimX, aimY) >= GameConfig.AIM_FIRE_THRESHOLD) {
-            0x99FF5252.toInt()
-        } else {
-            0x5557D68B
-        }
+        val aimFiring = aimActive && aimAtEdge
+        hudPaint.color = if (aimFiring) 0xCC57D68B.toInt() else 0x5557D68B
         canvas.drawCircle(aimKnobXDraw, aimKnobYDraw, aimKnobRadius, hudPaint)
-        strokePaint.strokeWidth = 1.5f * density
-        strokePaint.color = 0x55FF8A8A
-        canvas.drawCircle(aimBaseXDraw, aimBaseYDraw, aimRadius * GameConfig.AIM_FIRE_THRESHOLD, strokePaint)
+        if (aimFiring) {
+            strokePaint.strokeWidth = 2f * density
+            strokePaint.color = 0xAA57D68B.toInt()
+            canvas.drawCircle(aimBaseXDraw, aimBaseYDraw, aimRadius, strokePaint)
+        }
 
         // Fire button with reload arc.
         val fx = fireButtonX()
@@ -981,10 +984,27 @@ class GameView @JvmOverloads constructor(
         strokePaint.color = if (lightsOn) 0xAAFFE27A.toInt() else 0x55FFFFFF
         strokePaint.strokeWidth = 1.5f * density
         canvas.drawCircle(lx, ly, lightRadius, strokePaint)
-        textPaint.textAlign = Paint.Align.CENTER
-        textPaint.textSize = 15f * scaledDensity
-        textPaint.color = if (lightsOn) 0xFFFFE27A.toInt() else 0x66FFFFFF
-        canvas.drawText("Ф", lx, ly + 5f * density, textPaint)
+        val bulbColor = if (lightsOn) 0xFFFFE27A.toInt() else 0x88FFFFFF.toInt()
+        hudPaint.color = bulbColor
+        canvas.drawCircle(lx, ly - 3f * density, 6f * density, hudPaint)
+        canvas.drawRoundRect(
+            RectF(lx - 4f * density, ly + 2f * density, lx + 4f * density, ly + 7f * density),
+            1.5f * density, 1.5f * density, hudPaint,
+        )
+        canvas.drawRect(lx - 2f * density, ly + 7f * density, lx + 2f * density, ly + 9f * density, hudPaint)
+        if (lightsOn) {
+            strokePaint.style = Paint.Style.STROKE
+            strokePaint.strokeWidth = 1.3f * density
+            strokePaint.color = 0x99FFE27A.toInt()
+            for (i in 0 until 4) {
+                val a = -2.35f + i * 0.55f
+                canvas.drawLine(
+                    lx + cos(a) * 10f * density, ly - 3f * density + sin(a) * 10f * density,
+                    lx + cos(a) * 15f * density, ly - 3f * density + sin(a) * 15f * density,
+                    strokePaint,
+                )
+            }
+        }
 
         // Arrow to the safe zone when outside.
         if (me != null && me.alive) {
@@ -1023,7 +1043,7 @@ class GameView @JvmOverloads constructor(
             textPaint.textSize = 12.5f * scaledDensity
             textPaint.color = ((alpha * 200).toInt() shl 24) or 0x00E6ECE9
             canvas.drawText(
-                "левый стик — езда · правый — башня/огонь · Ф — фара",
+                "левый стик — езда · правый — башня, до края — огонь · лампочка — фара",
                 w / 2f, safeTop + 92f * density, textPaint,
             )
         }
