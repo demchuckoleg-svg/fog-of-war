@@ -45,6 +45,7 @@ jobs:
         run: |
           mkdir -p out
           cp app/build/outputs/apk/release/app-release.apk "out/fog-of-war-${GITHUB_RUN_NUMBER}.apk"
+          cp app/build/outputs/apk/release/app-release.apk "out/fog-of-war-latest.apk"
           ls -l out
 
       - name: Upload APK artifact
@@ -53,6 +54,17 @@ jobs:
           name: fog-of-war-apk
           path: out/fog-of-war-*.apk
           retention-days: 90
+
+      - name: Publish rolling latest release
+        if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest build
+          body: |
+            Автоматическая сборка из `master`, versionCode ${{ github.run_number }}.
+            Прямая ссылка для установки на телефон: этот APK ставится поверх предыдущей версии.
+          files: out/fog-of-war-latest.apk
 
       - name: Publish GitHub release for tags
         if: startsWith(github.ref, 'refs/tags/')
