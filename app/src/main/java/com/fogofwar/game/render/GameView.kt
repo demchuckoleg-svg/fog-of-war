@@ -299,8 +299,8 @@ class GameView @JvmOverloads constructor(
 
     private fun mineButtonX() = width - safeRight - 92f * density
     private fun mineButtonY() = height - safeBottom - 92f * density
-    private fun lightButtonX() = width - safeRight - 46f * density
-    private fun lightButtonY() = safeTop + 86f * density
+    private fun lightButtonX() = safeLeft + 40f * density
+    private fun lightButtonY() = safeTop + 152f * density
 
     private fun handlePointerDown(event: MotionEvent, index: Int) {
         val id = event.getPointerId(index)
@@ -1038,32 +1038,32 @@ class GameView @JvmOverloads constructor(
         val w = canvas.width.toFloat()
         val h = canvas.height.toFloat()
         val me = frame.me
-        val hudLeft = safeLeft + 20f * density
-        val hudTop = safeTop + 20f * density
+        val hudRight = w - safeRight - 20f * density
+        val hudTop = safeTop + 70f * density
 
-        // HP pips.
+        // HP pips, right aligned under the exit button.
         val pipW = 30f * density
         val pipH = 13f * density
         for (i in 0 until GameConfig.MAX_HP) {
-            val left = hudLeft + i * (pipW + 7f * density)
+            val left = hudRight - pipW - i * (pipW + 7f * density)
             hudPaint.color = if (i < (me?.hp ?: 0)) COLOR_HP else 0x33FF5252
             canvas.drawRoundRect(
                 RectF(left, hudTop, left + pipW, hudTop + pipH),
                 4f * density, 4f * density, hudPaint,
             )
         }
-        textPaint.textAlign = Paint.Align.LEFT
+        textPaint.textAlign = Paint.Align.RIGHT
         textPaint.textSize = 13f * scaledDensity
         textPaint.color = COLOR_DIM
         val alive = frame.tanks.count { it.alive }
         val total = frame.tanks.size
-        canvas.drawText("В ЖИВЫХ $alive / $total", hudLeft, hudTop + 36f * density, textPaint)
+        canvas.drawText("В ЖИВЫХ $alive / $total", hudRight, hudTop + 36f * density, textPaint)
 
         // Buff badges.
         if (me != null) {
-            if (me.powered) drawBadge(canvas, hudLeft, hudTop + 52f * density, "P", 0xFFFF9A3C.toInt())
-            if (me.lightBoost) drawBadge(canvas, hudLeft + 24f * density, hudTop + 52f * density, "L", 0xFFFFE27A.toInt())
-            if (!me.lightsOn) drawBadge(canvas, hudLeft + 48f * density, hudTop + 52f * density, "•", 0x66FFFFFF)
+            if (me.powered) drawBadge(canvas, hudRight - 18f * density, hudTop + 52f * density, "P", 0xFFFF9A3C.toInt())
+            if (me.lightBoost) drawBadge(canvas, hudRight - 42f * density, hudTop + 52f * density, "L", 0xFFFFE27A.toInt())
+            if (!me.lightsOn) drawBadge(canvas, hudRight - 66f * density, hudTop + 52f * density, "•", 0x66FFFFFF)
         }
 
         // Movement stick.
@@ -1225,7 +1225,7 @@ class GameView @JvmOverloads constructor(
             val age = now - line.at
             val alpha = (1f - age / 4500f).coerceIn(0f, 1f)
             textPaint.color = ((alpha * 200).toInt() shl 24) or 0x00FFB0A0
-            canvas.drawText(line.text, w - safeRight - 20f * density, safeTop + 78f * density + i * 18f * density, textPaint)
+            canvas.drawText(line.text, w - safeRight - 20f * density, safeTop + 162f * density + i * 18f * density, textPaint)
         }
     }
 
@@ -1233,7 +1233,7 @@ class GameView @JvmOverloads constructor(
     private fun drawMinimap(canvas: Canvas, frame: GameFrame, now: Long) {
         val map = frame.map
         val size = 112f * density
-        val left = canvas.width / 2f - size / 2f
+        val left = safeLeft + 10f * density
         val top = safeTop + 10f * density
 
         if (minimapMap !== map) {
