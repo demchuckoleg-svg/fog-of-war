@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg">#FF080B10</color>
+    <color name="bg_panel">#FF131A22</color>
+    <color name="accent">#FF57D68B</color>
+    <color name="accent_dark">#FF2E7D52</color>
+    <color name="text">#FFE6ECE9</color>
+    <color name="text_dim">#FF8A9A92</color>
+    <color name="danger">#FFD64545</color>
+    <color name="launcher_bg">#FF0B0F14</color>
+</resources>

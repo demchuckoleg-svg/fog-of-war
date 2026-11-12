@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Fog of War</string>
+    <string name="nickname_hint">Никнейм</string>
+    <string name="create_room">Создать комнату</string>
+    <string name="join_room">Найти игру</string>
+    <string name="stop_search">Остановить поиск</string>
+    <string name="start_game">Начать бой</string>
+    <string name="leave_room">Выйти из комнаты</string>
+    <string name="lobby">Лобби</string>
+    <string name="waiting_for_host">Ждём хоста…</string>
+    <string name="map">Карта</string>
+    <string name="players">Игроки</string>
+    <string name="exit">Выход</string>
+    <string name="status_idle">Создайте комнату или найдите игру рядом</string>
+    <string name="status_need_nickname">Введите никнейм</string>
+    <string name="status_bad_permissions">Нужны разрешения Bluetooth и Nearby для игры по локальной сети</string>
+    <string name="status_hosting">Комната создана, ждём игроков…</string>
+    <string name="status_searching">Ищем игры рядом…</string>
+    <string name="status_connecting">Подключение…</string>
+    <string name="host_prefix">Хост: </string>
+    <string name="solo_hint">Играете один — добавятся боты</string>
+    <string name="wins">Побед: %1$d</string>
+</resources>
