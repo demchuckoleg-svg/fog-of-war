@@ -80,7 +80,7 @@ class SocketTransportTest {
     fun hostRejectsUnknownToken() {
         val server = HostSocketServer(
             onFrame = { _, _ -> },
-            slotForToken = { 1 },
+            slotForToken = { token -> if (token == 1L) 1 else null },
         )
         assertTrue(server.start())
         val socket = Socket("127.0.0.1", server.port)
