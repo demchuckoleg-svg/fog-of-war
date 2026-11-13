@@ -77,7 +77,7 @@ class ClientRoundTest {
         val map = MapGenerator.generate(0, 4L)
         val round = ClientRound(map, 0, 0, players)
         round.onSnapshot(snapshotAt(tick = 1, x = 100f, body = 0f, turret = 0f))
-        round.setRoundOver(0, "host")
+        round.setRoundOver(0, -1, "host", emptyList())
         val frame = round.frameAt(System.nanoTime() / 1_000_000L)
         assertTrue(frame!!.roundOver)
         assertEquals("host", frame.winnerName)

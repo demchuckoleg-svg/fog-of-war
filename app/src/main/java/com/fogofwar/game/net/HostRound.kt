@@ -4,6 +4,7 @@ import com.fogofwar.game.core.EffectEvent
 import com.fogofwar.game.core.GameConfig
 import com.fogofwar.game.core.GameWorld
 import com.fogofwar.game.core.MapGenerator
+import com.fogofwar.game.core.RoundRules
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -20,8 +21,9 @@ class HostRound(
     val mapId: Int,
     val seed: Long,
     private val players: List<PlayerInfo>,
+    private val rules: RoundRules = RoundRules.CLASSIC,
 ) {
-    val world: GameWorld = GameWorld(MapGenerator.generate(mapId, seed), mapId, seed)
+    val world: GameWorld = GameWorld(MapGenerator.generate(mapId, seed), mapId, seed, rules)
 
     @Volatile
     var frame: GameFrame? = null
@@ -40,11 +42,15 @@ class HostRound(
     private var overTicks = -1L
     private var startAtNanos = 0L
     private val snapshotEvents = ArrayList<EffectEvent>()
+    private val snapshotKills = ArrayList<KillSnap>()
 
     init {
         for (player in players) {
-            if (player.isBot) world.addBot(player.slot, player.name)
-            else world.addPlayer(player.slot, player.name)
+            if (player.isBot) {
+                world.addBot(player.slot, player.name, player.team)
+            } else {
+                world.addPlayer(player.slot, player.name, team = player.team)
+            }
         }
     }
 
@@ -56,7 +62,7 @@ class HostRound(
     }
 
     /** Re-sends the round setup to a client that missed the original broadcast. */
-    internal fun startMessage(): ByteArray = Protocol.startRound(mapId, seed, players)
+    internal fun startMessage(): ByteArray = Protocol.startRound(mapId, seed, players, rules)
 
     fun stop() {
         aborted = true
@@ -95,6 +101,12 @@ class HostRound(
                 snapshotEvents.addAll(effects)
             }
 
+            val kills = world.drainKills()
+            if (kills.isNotEmpty()) {
+                net.pushKills(kills)
+                for (kill in kills) snapshotKills.add(KillSnap(kill.killer, kill.victim))
+            }
+
             val changes = world.drainTileChanges()
             if (changes.isNotEmpty()) {
                 var start = 0
@@ -124,6 +136,14 @@ class HostRound(
                             cooldown = it.cooldownFraction(),
                             grenadeRecharge = (it.grenadeRecharge / GameConfig.GRENADE_RECHARGE_TIME)
                                 .coerceIn(0f, 1f),
+                            team = it.team,
+                            lives = it.lives,
+                            powerLeft = if (GameConfig.POWER_DURATION > 0f) {
+                                (it.powerTime / GameConfig.POWER_DURATION).coerceIn(0f, 1f)
+                            } else 0f,
+                            lightLeft = if (GameConfig.LIGHT_BOOST_DURATION > 0f) {
+                                (it.lightTime / GameConfig.LIGHT_BOOST_DURATION).coerceIn(0f, 1f)
+                            } else 0f,
                         )
                     },
                     bullets = world.bullets.map { BulletSnap(it.x, it.y) },
@@ -133,8 +153,10 @@ class HostRound(
                     sonarRadius = world.sonarRadius,
                     sonarActive = world.sonarActive,
                     events = ArrayList(snapshotEvents),
+                    kills = ArrayList(snapshotKills),
                 )
                 snapshotEvents.clear()
+                snapshotKills.clear()
                 try {
                     net.broadcastRaw(Protocol.snapshot(snapshot))
                 } catch (t: Throwable) {
@@ -146,7 +168,13 @@ class HostRound(
                 if (overTicks < 0L) {
                     overTicks = tick
                     net.broadcastRaw(
-                        Protocol.roundOver(world.winnerSlot, world.winnerName ?: "", players)
+                        Protocol.roundOver(
+                            winnerSlot = world.winnerSlot,
+                            winnerTeam = world.winnerTeam,
+                            winnerName = world.winnerName ?: "",
+                            players = players,
+                            results = roundResults(),
+                        )
                     )
                 }
                 if (tick - overTicks >= (GameConfig.ROUND_OVER_DELAY * GameConfig.TICK_HZ).toLong()) {
@@ -182,6 +210,14 @@ class HostRound(
                 cooldown = tank.cooldownFraction(),
                 grenadeRecharge = (tank.grenadeRecharge / GameConfig.GRENADE_RECHARGE_TIME)
                     .coerceIn(0f, 1f),
+                team = tank.team,
+                lives = tank.lives,
+                powerLeft = if (GameConfig.POWER_DURATION > 0f) {
+                    (tank.powerTime / GameConfig.POWER_DURATION).coerceIn(0f, 1f)
+                } else 0f,
+                lightLeft = if (GameConfig.LIGHT_BOOST_DURATION > 0f) {
+                    (tank.lightTime / GameConfig.LIGHT_BOOST_DURATION).coerceIn(0f, 1f)
+                } else 0f,
             )
         }
         return GameFrame(
@@ -200,8 +236,15 @@ class HostRound(
             winnerName = world.winnerName,
             winnerSlot = world.winnerSlot,
             tick = tick,
+            rules = rules,
+            winnerTeam = world.winnerTeam,
+            results = if (world.roundOver) roundResults() else emptyList(),
         )
     }
+
+    private fun roundResults(): List<RoundResult> = world.tanks
+        .map { RoundResult(it.slot, it.kills, it.deaths, it.damageDealt) }
+        .sortedWith(compareByDescending<RoundResult> { it.kills }.thenByDescending { it.damage })
 
     private companion object {
         /** Reliable payloads stay small; a long grenade chain is split into several messages. */

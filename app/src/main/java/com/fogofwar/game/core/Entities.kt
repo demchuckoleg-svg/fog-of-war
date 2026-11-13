@@ -47,7 +47,12 @@ data class TankInput(
     var bodyDir: Float,
     var turretDir: Float,
     val isBot: Boolean = false,
+    val team: Int = 0,
+    livesMax: Int = 1,
 ) {
+    val spawnX: Float = x
+    val spawnY: Float = y
+
     var hp: Int = GameConfig.MAX_HP
     var alive: Boolean = true
     var cooldown: Float = 0f
@@ -56,6 +61,12 @@ data class TankInput(
     var lastDamageFrom: Int = -1
     var lightsOn: Boolean = true
     var moving: Boolean = false
+
+    var lives: Int = livesMax
+    var kills: Int = 0
+    var deaths: Int = 0
+    var damageDealt: Int = 0
+    var respawnTimer: Float = 0f
 
     /** Buff timers driven by pickups. */
     var powerTime: Float = 0f
@@ -107,6 +118,9 @@ class Pickup(
     var y: Float,
     val type: Int,
 )
+
+/** One death for the kill feed and the end-of-round summary. */
+data class KillEvent(val killer: Int, val victim: Int)
 
 class Grenade(
     var x: Float,

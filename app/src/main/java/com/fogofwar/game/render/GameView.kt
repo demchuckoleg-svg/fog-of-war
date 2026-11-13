@@ -138,7 +138,6 @@ class GameView @JvmOverloads constructor(
     private val blips = ArrayList<Blip>()
     private var lastSonarRadius = 0f
     private val lastTreadAt = HashMap<Int, Long>()
-    private val lastAlive = HashMap<Int, Boolean>()
     private val feed = ArrayList<FeedLine>()
 
     /** Where enemies were last seen in the headlight, for the fading "last seen" markers. */
@@ -349,6 +348,20 @@ class GameView @JvmOverloads constructor(
                             EffectKind.PICKUP -> if (dist < 120f) vibrate(25L, 90)
                             else -> Unit
                         }
+                    }
+                }
+
+                val kills = net.pollKills()
+                if (kills.isNotEmpty()) {
+                    val names = lastFrame?.tanks?.associate { it.slot to it.name } ?: emptyMap()
+                    for (kill in kills) {
+                        val victim = names[kill.victim] ?: "?"
+                        val text = if (kill.killer >= 0) {
+                            "${names[kill.killer] ?: "?"} → $victim"
+                        } else {
+                            "$victim уничтожен"
+                        }
+                        feed.add(FeedLine(text, now))
                     }
                 }
 
@@ -722,7 +735,7 @@ class GameView @JvmOverloads constructor(
 
         val me = frame.me
         val drawStart = System.nanoTime()
-        updateFeed(frame, now)
+        updateFeed(now)
         updateLastSeen(frame, now)
         val center = GameConfig.WORLD_SIZE / 2f
         camera.update(
@@ -981,7 +994,11 @@ class GameView @JvmOverloads constructor(
 
     private fun drawTank(canvas: Canvas, frame: GameFrame, tank: RenderTank, now: Long) {
         val isMe = tank.slot == frame.mySlot
-        val color = if (isMe) COLOR_ME else PLAYER_COLORS[tank.slot % PLAYER_COLORS.size]
+        val color = when {
+            frame.rules.teams -> TEAM_COLORS[tank.team % TEAM_COLORS.size]
+            isMe -> COLOR_ME
+            else -> PLAYER_COLORS[tank.slot % PLAYER_COLORS.size]
+        }
 
         canvas.drawCircle(tank.x + 2f, tank.y + 5f, 13f, shadowPaint)
 
@@ -1020,7 +1037,8 @@ class GameView @JvmOverloads constructor(
             textPaint.textAlign = Paint.Align.CENTER
             textPaint.textSize = 10f * scaledDensity / camera.scale
             textPaint.color = 0xCCE6ECE9.toInt()
-            canvas.drawText(tank.name, tank.x, tank.y - 19f, textPaint)
+            val label = if (frame.rules.lives > 1) "${tank.name} ×${tank.lives}" else tank.name
+            canvas.drawText(label, tank.x, tank.y - 19f, textPaint)
             val pipW = 7f
             for (i in 0 until GameConfig.MAX_HP) {
                 hudPaint.color = if (i < tank.hp) 0xFFE05555.toInt() else 0x55333333
@@ -1341,12 +1359,17 @@ class GameView @JvmOverloads constructor(
         textPaint.color = COLOR_DIM
         val alive = frame.tanks.count { it.alive }
         val total = frame.tanks.size
-        canvas.drawText("В ЖИВЫХ $alive / $total", hudRight, hudTop + 36f * density, textPaint)
+        val livesText = if (me != null && frame.rules.lives > 1) "  ·  ЖИЗНИ ${me.lives}" else ""
+        canvas.drawText("В ЖИВЫХ $alive / $total$livesText", hudRight, hudTop + 36f * density, textPaint)
 
-        // Buff badges.
+        // Buff badges with the remaining fraction as a ring.
         if (me != null) {
-            if (me.powered) drawBadge(canvas, hudRight - 18f * density, hudTop + 52f * density, "P", 0xFFFF9A3C.toInt())
-            if (me.lightBoost) drawBadge(canvas, hudRight - 42f * density, hudTop + 52f * density, "L", 0xFFFFE27A.toInt())
+            if (me.powered) {
+                drawBadge(canvas, hudRight - 18f * density, hudTop + 52f * density, "P", 0xFFFF9A3C.toInt(), me.powerLeft)
+            }
+            if (me.lightBoost) {
+                drawBadge(canvas, hudRight - 42f * density, hudTop + 52f * density, "L", 0xFFFFE27A.toInt(), me.lightLeft)
+            }
             if (!me.lightsOn) drawBadge(canvas, hudRight - 66f * density, hudTop + 52f * density, "•", 0x66FFFFFF)
         }
 
@@ -1462,8 +1485,13 @@ class GameView @JvmOverloads constructor(
         }
 
         if (me != null && !me.alive && !frame.roundOver) {
-            drawCenteredText(canvas, "УНИЧТОЖЕН", h / 2f, 22f, 0xCCFF6B6B.toInt())
-            drawCenteredText(canvas, "наблюдение", h / 2f + 30f * density, 13f, COLOR_DIM)
+            if (frame.rules.lives > 1 && me.lives > 0) {
+                drawCenteredText(canvas, "ВОЗРОЖДЕНИЕ", h / 2f, 22f, 0xCCFFE27A.toInt())
+                drawCenteredText(canvas, "жизней осталось: ${me.lives}", h / 2f + 30f * density, 13f, COLOR_DIM)
+            } else {
+                drawCenteredText(canvas, "УНИЧТОЖЕН", h / 2f, 22f, 0xCCFF6B6B.toInt())
+                drawCenteredText(canvas, "наблюдение", h / 2f + 30f * density, 13f, COLOR_DIM)
+            }
         }
 
         if (now < hintUntil && !frame.roundOver) {
@@ -1493,29 +1521,37 @@ class GameView @JvmOverloads constructor(
         if (frame.roundOver) {
             hudPaint.color = 0xB3000000.toInt()
             canvas.drawRect(0f, 0f, w, h, hudPaint)
-            val iWon = if (frame.winnerSlot >= 0) {
-                frame.winnerSlot == frame.mySlot
-            } else {
-                me != null && frame.winnerName == me.name
+            val iWon = when {
+                frame.winnerTeam >= 0 -> me != null && me.team == frame.winnerTeam
+                frame.winnerSlot >= 0 -> frame.winnerSlot == frame.mySlot
+                else -> false
             }
             val title = when {
                 frame.winnerName == null -> "НИЧЬЯ"
                 iWon -> "ПОБЕДА!"
                 else -> "ПОБЕДИЛ: ${frame.winnerName}"
             }
-            drawCenteredText(canvas, title, h / 2f - 10f * density, 34f, COLOR_ME)
-            drawCenteredText(canvas, "возврат в лобби…", h / 2f + 40f * density, 15f, COLOR_DIM)
+            drawCenteredText(canvas, title, h / 2f - 76f * density, 34f, COLOR_ME)
+
+            if (frame.results.isNotEmpty()) {
+                val names = frame.players.associate { it.slot to it.name }
+                textPaint.textAlign = Paint.Align.CENTER
+                textPaint.textSize = 13f * scaledDensity
+                textPaint.color = 0xFFE6ECE9.toInt()
+                val top = frame.results.take(5)
+                for ((index, result) in top.withIndex()) {
+                    val name = names[result.slot]
+                        ?: frame.tanks.firstOrNull { it.slot == result.slot }?.name
+                        ?: "?"
+                    val line = "$name   убийств: ${result.kills}   смертей: ${result.deaths}"
+                    canvas.drawText(line, w / 2f, h / 2f - 18f * density + index * 22f * density, textPaint)
+                }
+            }
+            drawCenteredText(canvas, "возврат в лобби…", h / 2f + 128f * density, 15f, COLOR_DIM)
         }
     }
 
-    private fun updateFeed(frame: GameFrame, now: Long) {
-        for (tank in frame.tanks) {
-            val wasAlive = lastAlive[tank.slot]
-            if (wasAlive == true && !tank.alive) {
-                feed.add(FeedLine("${tank.name} уничтожен", now))
-            }
-            lastAlive[tank.slot] = tank.alive
-        }
+    private fun updateFeed(now: Long) {
         feed.removeAll { now - it.at > 4500L }
     }
 
@@ -1614,13 +1650,30 @@ class GameView @JvmOverloads constructor(
         }
     }
 
-    private fun drawBadge(canvas: Canvas, x: Float, y: Float, label: String, color: Int) {
+    private fun drawBadge(
+        canvas: Canvas,
+        x: Float,
+        y: Float,
+        label: String,
+        color: Int,
+        fraction: Float = 1f,
+    ) {
+        val cx = x + 9f * density
         hudPaint.color = (0x33 shl 24) or (color and 0x00FFFFFF)
-        canvas.drawCircle(x + 9f * density, y, 10f * density, hudPaint)
+        canvas.drawCircle(cx, y, 10f * density, hudPaint)
         textPaint.textAlign = Paint.Align.CENTER
         textPaint.textSize = 11f * scaledDensity
         textPaint.color = color
-        canvas.drawText(label, x + 9f * density, y + 4f * density, textPaint)
+        canvas.drawText(label, cx, y + 4f * density, textPaint)
+        if (fraction < 0.999f) {
+            arcPaint.strokeWidth = 2.5f * density
+            arcPaint.color = (0xAA shl 24) or (color and 0x00FFFFFF)
+            arcRect.set(
+                cx - 12.5f * density, y - 12.5f * density,
+                cx + 12.5f * density, y + 12.5f * density,
+            )
+            canvas.drawArc(arcRect, -90f, 360f * fraction.coerceIn(0f, 1f), false, arcPaint)
+        }
     }
 
     private fun drawCenteredText(canvas: Canvas, text: String, y: Float, sizeSp: Float, color: Int) {
@@ -1647,6 +1700,7 @@ class GameView @JvmOverloads constructor(
         private val COLOR_GROUND = 0xFF1A221A.toInt()
         private val COLOR_ME = 0xFF57D68B.toInt()
         private val COLOR_DIM = 0xFF8A9A92.toInt()
+        private val TEAM_COLORS = intArrayOf(0xFF57D68B.toInt(), 0xFFE05A5A.toInt())
         private val COLOR_TEXT = 0xFFE6ECE9.toInt()
         private val COLOR_HP = 0xFFFF5252.toInt()
         private const val GHOST_MS = 4000L

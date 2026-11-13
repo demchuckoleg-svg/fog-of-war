@@ -6,19 +6,24 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.view.View
+import android.view.ViewGroup
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.widget.doAfterTextChanged
+import com.fogofwar.game.core.GameConfig
 import com.fogofwar.game.core.MapGenerator
+import com.fogofwar.game.core.RoundRules
 import com.fogofwar.game.databinding.ActivityMainBinding
 import com.fogofwar.game.net.LobbyUiState
 import com.fogofwar.game.net.NearbyNet
 import com.fogofwar.game.net.RoomState
+import com.google.android.material.button.MaterialButton
 
 class MainActivity : AppCompatActivity(), NearbyNet.Listener {
 
@@ -28,6 +33,7 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
 
     private var pendingAction: PendingAction = PendingAction.NONE
     private var suppressSpinner = false
+    private var suppressRules = false
     private var lastState: LobbyUiState = LobbyUiState()
 
     private enum class PendingAction { NONE, HOST, DISCOVER }
@@ -86,6 +92,44 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
 
             override fun onNothingSelected(parent: AdapterView<*>?) = Unit
         }
+
+        binding.modeSpinner.adapter = ArrayAdapter(
+            this,
+            R.layout.spinner_item,
+            listOf(getString(R.string.rules_ffa), getString(R.string.rules_teams)),
+        )
+        binding.livesSpinner.adapter = ArrayAdapter(
+            this,
+            R.layout.spinner_item,
+            listOf(
+                getString(R.string.rules_lives_1),
+                getString(R.string.rules_lives_3),
+                getString(R.string.rules_lives_5),
+            ),
+        )
+        binding.timeSpinner.adapter = ArrayAdapter(
+            this,
+            R.layout.spinner_item,
+            listOf(
+                getString(R.string.rules_time_0),
+                getString(R.string.rules_time_3),
+                getString(R.string.rules_time_5),
+            ),
+        )
+        val rulesListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                if (!suppressRules && net.isHost) net.updateRules(rulesFromUi())
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+        }
+        binding.modeSpinner.onItemSelectedListener = rulesListener
+        binding.livesSpinner.onItemSelectedListener = rulesListener
+        binding.timeSpinner.onItemSelectedListener = rulesListener
+        binding.pickupsSwitch.setOnCheckedChangeListener { _, _ ->
+            if (!suppressRules && net.isHost) net.updateRules(rulesFromUi())
+        }
+        binding.readyButton.setOnClickListener { net.setReady(!net.myReady) }
         render(lastState)
     }
 
@@ -159,6 +203,66 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
         }
     }
 
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    private fun rulesFromUi(): RoundRules = RoundRules(
+        teams = binding.modeSpinner.selectedItemPosition == 1,
+        lives = when (binding.livesSpinner.selectedItemPosition) {
+            1 -> 3
+            2 -> 5
+            else -> 1
+        },
+        timeLimitSec = when (binding.timeSpinner.selectedItemPosition) {
+            1 -> 180
+            2 -> 300
+            else -> 0
+        },
+        pickups = binding.pickupsSwitch.isChecked,
+    )
+
+    private fun applyRulesToUi(rules: RoundRules) {
+        suppressRules = true
+        binding.modeSpinner.setSelection(if (rules.teams) 1 else 0, false)
+        binding.livesSpinner.setSelection(
+            when (rules.lives) {
+                3 -> 1
+                5 -> 2
+                else -> 0
+            },
+            false,
+        )
+        binding.timeSpinner.setSelection(
+            when (rules.timeLimitSec) {
+                180 -> 1
+                300 -> 2
+                else -> 0
+            },
+            false,
+        )
+        binding.pickupsSwitch.isChecked = rules.pickups
+        suppressRules = false
+    }
+
+    private fun rulesSummary(rules: RoundRules): String {
+        val mode = getString(if (rules.teams) R.string.rules_teams else R.string.rules_ffa)
+        val lives = when (rules.lives) {
+            3 -> getString(R.string.rules_lives_3)
+            5 -> getString(R.string.rules_lives_5)
+            else -> getString(R.string.rules_lives_1)
+        }
+        val time = when (rules.timeLimitSec) {
+            180 -> getString(R.string.rules_time_3)
+            300 -> getString(R.string.rules_time_5)
+            else -> getString(R.string.rules_time_0)
+        }
+        return getString(
+            if (rules.pickups) R.string.rules_summary_pickups else R.string.rules_summary,
+            mode,
+            lives,
+            time,
+        )
+    }
+
     private fun render(state: LobbyUiState) {
         binding.statsText.text = getString(R.string.stats_lifetime, net.lifetimeWins, net.lifetimeGames)
         val inLobby = state.inLobby && state.roomState != RoomState.DISCOVERING
@@ -177,18 +281,40 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
 
         binding.playersContainer.removeAllViews()
         for (player in state.players) {
-            val row = TextView(this).apply {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                setPadding(0, dp(6), 0, 0)
+            }
+            val label = TextView(this).apply {
                 text = buildString {
                     append(if (player.isBot) "🤖 " else if (player.slot == 0) "👑 " else "• ")
                     append(player.name)
+                    if (state.rules.teams) append("   [${if (player.team == 0) "A" else "B"}]")
+                    if (player.ready) append("   ✓")
                     if (player.wins > 0) append("   (${player.wins} 🏆)")
                     if (player.slot == state.mySlot) append("  — вы")
                 }
                 textSize = 16f
                 setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text))
-                setPadding(0, (6 * resources.displayMetrics.density).toInt(), 0, 0)
             }
-            binding.playersContainer.addView(row)
+            row.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            if (state.isHost && player.slot != 0 && !player.isBot) {
+                val kick = MaterialButton(this).apply {
+                    text = getString(R.string.kick)
+                    textSize = 12f
+                    minWidth = 0
+                    minimumWidth = 0
+                    setPadding(dp(10), 0, dp(10), 0)
+                    setTextColor(ContextCompat.getColor(this@MainActivity, R.color.danger))
+                    setOnClickListener { net.kick(player.slot) }
+                }
+                row.addView(kick, LinearLayout.LayoutParams(dp(64), dp(36)))
+            }
+            binding.playersContainer.addView(
+                row,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+            )
         }
 
         binding.roomInfo.text = "${state.players.size}/${com.fogofwar.game.core.GameConfig.MAX_PLAYERS}"
@@ -202,6 +328,12 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
         binding.mapSpinner.visibility = if (host) View.VISIBLE else View.GONE
         binding.startButton.visibility = if (host) View.VISIBLE else View.GONE
         binding.startButton.text = getString(R.string.start_game)
+        binding.rulesPanel.visibility = if (host) View.VISIBLE else View.GONE
+        binding.rulesText.text = rulesSummary(state.rules)
+        if (host) applyRulesToUi(state.rules)
+        binding.readyButton.visibility = if (host) View.GONE else View.VISIBLE
+        binding.readyButton.text =
+            getString(if (net.myReady) R.string.not_ready else R.string.ready)
 
         if (host && binding.mapSpinner.selectedItemPosition != state.mapId) {
             suppressSpinner = true
@@ -213,7 +345,7 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
             !host -> "Карта: ${MapGenerator.MAP_NAMES.getOrElse(state.mapId) { "?" }}. " +
                 getString(R.string.waiting_for_host)
             state.players.size <= 1 -> getString(R.string.solo_hint)
-            else -> "Игроков: ${state.players.size}. Можно начинать."
+            else -> "Готовы: ${state.players.count { it.ready }}/${state.players.size}. Можно начинать."
         }
     }
 }

@@ -2,6 +2,7 @@ package com.fogofwar.game.net
 
 import com.fogofwar.game.core.EffectEvent
 import com.fogofwar.game.core.GameConfig
+import com.fogofwar.game.core.RoundRules
 import com.fogofwar.game.core.TileMap
 
 data class TankSnap(
@@ -15,6 +16,10 @@ data class TankSnap(
     val grenades: Int,
     val cooldown: Float,
     val grenadeRecharge: Float = 0f,
+    val team: Int = 0,
+    val lives: Int = 1,
+    val powerLeft: Float = 0f,
+    val lightLeft: Float = 0f,
 ) {
     val alive: Boolean get() = flags and GameConfig.FLAG_ALIVE != 0
     val lightsOn: Boolean get() = flags and GameConfig.FLAG_LIGHTS != 0
@@ -30,6 +35,17 @@ data class PickupSnap(val type: Int, val x: Float, val y: Float)
 
 data class GrenadeSnap(val x: Float, val y: Float, val landed: Boolean, val owner: Int)
 
+/** Two slots per death; killer is -1 for zone damage. */
+data class KillSnap(val killer: Int, val victim: Int)
+
+/** Per-player numbers for the end-of-round screen. */
+data class RoundResult(
+    val slot: Int,
+    val kills: Int,
+    val deaths: Int,
+    val damage: Int,
+)
+
 data class Snapshot(
     val tick: Long,
     val tanks: List<TankSnap>,
@@ -40,6 +56,7 @@ data class Snapshot(
     val sonarRadius: Float,
     val sonarActive: Boolean,
     val events: List<EffectEvent>,
+    val kills: List<KillSnap> = emptyList(),
 )
 
 data class RenderTank(
@@ -60,6 +77,10 @@ data class RenderTank(
     val grenades: Int,
     val cooldown: Float,
     val grenadeRecharge: Float,
+    val team: Int = 0,
+    val lives: Int = 1,
+    val powerLeft: Float = 0f,
+    val lightLeft: Float = 0f,
 )
 
 /** Immutable view of the world that the renderer consumes once per frame. */
@@ -79,6 +100,9 @@ data class GameFrame(
     val winnerName: String?,
     val winnerSlot: Int = -1,
     val tick: Long,
+    val rules: RoundRules = RoundRules.CLASSIC,
+    val winnerTeam: Int = -1,
+    val results: List<RoundResult> = emptyList(),
 ) {
     val me: RenderTank? get() = tanks.firstOrNull { it.slot == mySlot }
     val aliveCount: Int get() = tanks.count { it.alive }

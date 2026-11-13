@@ -49,4 +49,18 @@
     <string name="settings_confirm">Спрашивать перед выходом из боя</string>
     <string name="stats_lifetime">Побед: %1$d · боёв: %2$d</string>
     <string name="back">Назад</string>
+    <string name="ready">Готов</string>
+    <string name="not_ready">Не готов</string>
+    <string name="kick">Кик</string>
+    <string name="settings_pickups">Пикапы</string>
+    <string name="rules_ffa">Каждый за себя</string>
+    <string name="rules_teams">Команды</string>
+    <string name="rules_lives_1">1 жизнь</string>
+    <string name="rules_lives_3">3 жизни</string>
+    <string name="rules_lives_5">5 жизней</string>
+    <string name="rules_time_0">Без лимита</string>
+    <string name="rules_time_3">3 минуты</string>
+    <string name="rules_time_5">5 минут</string>
+    <string name="rules_summary">%1$s · %2$s · %3$s</string>
+    <string name="rules_summary_pickups">%1$s · %2$s · %3$s · пикапы</string>
 </resources>

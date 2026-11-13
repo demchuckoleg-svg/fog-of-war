@@ -1,6 +1,7 @@
 package com.fogofwar.game.net
 
 import com.fogofwar.game.core.GameConfig
+import com.fogofwar.game.core.RoundRules
 import com.fogofwar.game.core.TileChange
 import com.fogofwar.game.core.TileMap
 import com.fogofwar.game.core.lerpAngle
@@ -14,6 +15,7 @@ class ClientRound(
     val mapId: Int,
     private val mySlot: Int,
     private val players: List<PlayerInfo>,
+    private val rules: RoundRules = RoundRules.CLASSIC,
 ) {
     private class Timed(val snapshot: Snapshot, val atMs: Long)
 
@@ -32,6 +34,12 @@ class ClientRound(
 
     @Volatile
     private var winnerSlot = -1
+
+    @Volatile
+    private var winnerTeam = -1
+
+    @Volatile
+    private var results: List<RoundResult> = emptyList()
 
     /** Last snapshot arrival, used by the host-silence watchdog. */
     @Volatile
@@ -64,9 +72,16 @@ class ClientRound(
         }
     }
 
-    fun setRoundOver(slot: Int, name: String?) {
+    fun setRoundOver(
+        slot: Int,
+        team: Int,
+        name: String?,
+        results: List<RoundResult>,
+    ) {
         winnerSlot = slot
+        winnerTeam = team
         winnerName = name
+        this.results = results
         roundOver = true
     }
 
@@ -116,6 +131,10 @@ class ClientRound(
                 grenades = tb.grenades,
                 cooldown = tb.cooldown,
                 grenadeRecharge = tb.grenadeRecharge,
+                team = tb.team,
+                lives = tb.lives,
+                powerLeft = tb.powerLeft,
+                lightLeft = tb.lightLeft,
             )
         }
 
@@ -137,6 +156,9 @@ class ClientRound(
             winnerName = winnerName,
             winnerSlot = winnerSlot,
             tick = b.snapshot.tick,
+            rules = rules,
+            winnerTeam = winnerTeam,
+            results = results,
         )
     }
 

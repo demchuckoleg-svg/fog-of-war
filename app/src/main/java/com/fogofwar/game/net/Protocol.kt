@@ -2,6 +2,7 @@ package com.fogofwar.game.net
 
 import com.fogofwar.game.core.EffectEvent
 import com.fogofwar.game.core.EffectKind
+import com.fogofwar.game.core.RoundRules
 import com.fogofwar.game.core.Tile
 import com.fogofwar.game.core.TileChange
 import java.nio.ByteBuffer
@@ -13,6 +14,8 @@ data class PlayerInfo(
     val name: String,
     val wins: Int = 0,
     val isBot: Boolean = false,
+    val ready: Boolean = false,
+    val team: Int = 0,
 )
 
 /**
@@ -53,6 +56,7 @@ data class LobbyUiState(
     val hosts: List<HostInfo> = emptyList(),
     val roomCode: String = "",
     val status: String? = null,
+    val rules: RoundRules = RoundRules.CLASSIC,
 ) {
     val inLobby: Boolean
         get() = roomState == RoomState.HOSTING || roomState == RoomState.LOBBY ||
@@ -62,8 +66,18 @@ data class LobbyUiState(
 sealed class NetMessage {
     data class Hello(val name: String, val version: Int = Protocol.VERSION) : NetMessage()
     data class Welcome(val slot: Int, val version: Int = Protocol.VERSION) : NetMessage()
-    data class Roster(val roomState: RoomState, val mapId: Int, val players: List<PlayerInfo>) : NetMessage()
-    data class StartRound(val mapId: Int, val seed: Long, val players: List<PlayerInfo>) : NetMessage()
+    data class Roster(
+        val roomState: RoomState,
+        val mapId: Int,
+        val players: List<PlayerInfo>,
+        val rules: RoundRules = RoundRules.CLASSIC,
+    ) : NetMessage()
+    data class StartRound(
+        val mapId: Int,
+        val seed: Long,
+        val players: List<PlayerInfo>,
+        val rules: RoundRules = RoundRules.CLASSIC,
+    ) : NetMessage()
     data class InputMsg(
         val seq: Int,
         val moveX: Float,
@@ -76,14 +90,22 @@ sealed class NetMessage {
     ) : NetMessage()
     data class SnapshotMsg(val snapshot: Snapshot) : NetMessage()
     data class TileSync(val changes: List<TileChange>) : NetMessage()
-    data class RoundOver(val winnerSlot: Int, val winnerName: String, val players: List<PlayerInfo>) : NetMessage()
+    data class RoundOver(
+        val winnerSlot: Int,
+        val winnerTeam: Int,
+        val winnerName: String,
+        val players: List<PlayerInfo>,
+        val results: List<RoundResult> = emptyList(),
+    ) : NetMessage()
     data class MapSelect(val mapId: Int) : NetMessage()
     data class RoomClosed(val reason: String) : NetMessage()
+    data class SetReady(val ready: Boolean) : NetMessage()
+    data class Kick(val slot: Int, val reason: String) : NetMessage()
 }
 
-/** Binary wire protocol. Bump VERSION + SERVICE_ID when the format changes. */
+/** Binary wire protocol. Bump [VERSION] when the format changes. */
 object Protocol {
-    const val VERSION = 4
+    const val VERSION = 5
 
     private const val MSG_HELLO = 1
     private const val MSG_WELCOME = 2
@@ -95,6 +117,8 @@ object Protocol {
     private const val MSG_MAP_SELECT = 8
     private const val MSG_ROOM_CLOSED = 9
     private const val MSG_TILE_SYNC = 10
+    private const val MSG_SET_READY = 11
+    private const val MSG_KICK = 12
 
     private const val INPUT_FIRE = 1
     private const val INPUT_LIGHTS = 2
@@ -121,21 +145,48 @@ object Protocol {
         return finish(b)
     }
 
-    fun roster(state: RoomState, mapId: Int, players: List<PlayerInfo>): ByteArray {
-        val b = ByteBuffer.allocate(64 + players.size * 72)
+    fun roster(
+        state: RoomState,
+        mapId: Int,
+        players: List<PlayerInfo>,
+        rules: RoundRules,
+    ): ByteArray {
+        val b = ByteBuffer.allocate(80 + players.size * 80)
         b.put(MSG_ROSTER.toByte())
         b.put(state.ordinal.toByte())
         b.put(mapId.toByte())
+        putRules(b, rules)
         putPlayers(b, players)
         return finish(b)
     }
 
-    fun startRound(mapId: Int, seed: Long, players: List<PlayerInfo>): ByteArray {
-        val b = ByteBuffer.allocate(80 + players.size * 72)
+    fun startRound(
+        mapId: Int,
+        seed: Long,
+        players: List<PlayerInfo>,
+        rules: RoundRules,
+    ): ByteArray {
+        val b = ByteBuffer.allocate(96 + players.size * 80)
         b.put(MSG_START.toByte())
         b.put(mapId.toByte())
         b.putLong(seed)
+        putRules(b, rules)
         putPlayers(b, players)
+        return finish(b)
+    }
+
+    fun setReady(ready: Boolean): ByteArray {
+        val b = ByteBuffer.allocate(4)
+        b.put(MSG_SET_READY.toByte())
+        b.put(if (ready) 1 else 0)
+        return finish(b)
+    }
+
+    fun kick(slot: Int, reason: String): ByteArray {
+        val b = ByteBuffer.allocate(64)
+        b.put(MSG_KICK.toByte())
+        b.put(slot.toByte())
+        putString(b, reason)
         return finish(b)
     }
 
@@ -165,12 +216,13 @@ object Protocol {
     }
 
     fun snapshot(snapshot: Snapshot): ByteArray {
-        val size = 24 +
-            snapshot.tanks.size * 22 +
+        val size = 32 +
+            snapshot.tanks.size * 26 +
             snapshot.bullets.size * 8 +
             snapshot.pickups.size * 9 +
             snapshot.grenades.size * 10 +
-            snapshot.events.size * 13
+            snapshot.events.size * 13 +
+            snapshot.kills.size * 2
         val b = ByteBuffer.allocate(size)
         b.put(MSG_SNAPSHOT.toByte())
         b.putInt(snapshot.tick.toInt())
@@ -187,6 +239,10 @@ object Protocol {
             b.put(t.grenades.toByte())
             b.put((t.cooldown.coerceIn(0f, 1f) * 255f).toInt().toByte())
             b.put((t.grenadeRecharge.coerceIn(0f, 1f) * 255f).toInt().toByte())
+            b.put(t.team.toByte())
+            b.put(t.lives.toByte())
+            b.put((t.powerLeft.coerceIn(0f, 1f) * 255f).toInt().toByte())
+            b.put((t.lightLeft.coerceIn(0f, 1f) * 255f).toInt().toByte())
         }
 
         b.putShort(snapshot.bullets.size.toShort())
@@ -221,6 +277,12 @@ object Protocol {
             b.putFloat(event.y)
             b.putFloat(event.radius)
         }
+
+        b.putShort(snapshot.kills.size.toShort())
+        for (kill in snapshot.kills) {
+            b.put(kill.killer.toByte())
+            b.put(kill.victim.toByte())
+        }
         return finish(b)
     }
 
@@ -239,12 +301,26 @@ object Protocol {
         return finish(b)
     }
 
-    fun roundOver(winnerSlot: Int, winnerName: String, players: List<PlayerInfo>): ByteArray {
-        val b = ByteBuffer.allocate(96 + players.size * 72)
+    fun roundOver(
+        winnerSlot: Int,
+        winnerTeam: Int,
+        winnerName: String,
+        players: List<PlayerInfo>,
+        results: List<RoundResult>,
+    ): ByteArray {
+        val b = ByteBuffer.allocate(112 + players.size * 80 + results.size * 5)
         b.put(MSG_ROUND_OVER.toByte())
         b.put(winnerSlot.toByte())
+        b.put(winnerTeam.toByte())
         putString(b, winnerName)
         putPlayers(b, players)
+        b.put(results.size.toByte())
+        for (result in results) {
+            b.put(result.slot.toByte())
+            b.put(result.kills.toByte())
+            b.put(result.deaths.toByte())
+            b.putShort(result.damage.toShort())
+        }
         return finish(b)
     }
 
@@ -279,12 +355,14 @@ object Protocol {
                 MSG_ROSTER -> {
                     val state = readRoomState(b.get().toInt() and 0xFF)
                     val mapId = b.get().toInt() and 0xFF
-                    NetMessage.Roster(state, mapId, readPlayers(b))
+                    val rules = readRules(b)
+                    NetMessage.Roster(state, mapId, readPlayers(b), rules)
                 }
                 MSG_START -> {
                     val mapId = b.get().toInt() and 0xFF
                     val seed = b.long
-                    NetMessage.StartRound(mapId, seed, readPlayers(b))
+                    val rules = readRules(b)
+                    NetMessage.StartRound(mapId, seed, readPlayers(b), rules)
                 }
                 MSG_INPUT -> {
                     val seq = b.int
@@ -306,13 +384,32 @@ object Protocol {
                 }
                 MSG_SNAPSHOT -> NetMessage.SnapshotMsg(readSnapshot(b))
                 MSG_TILE_SYNC -> NetMessage.TileSync(readTileChanges(b))
-                MSG_ROUND_OVER -> NetMessage.RoundOver(
-                    b.get().toInt(),
-                    readString(b),
-                    readPlayers(b),
-                )
+                MSG_ROUND_OVER -> {
+                    val winnerSlot = b.get().toInt()
+                    val winnerTeam = b.get().toInt()
+                    val winnerName = readString(b)
+                    val players = readPlayers(b)
+                    val resultCount = b.get().toInt() and 0xFF
+                    val results = ArrayList<RoundResult>(resultCount)
+                    repeat(resultCount) {
+                        results.add(
+                            RoundResult(
+                                slot = b.get().toInt() and 0xFF,
+                                kills = b.get().toInt() and 0xFF,
+                                deaths = b.get().toInt() and 0xFF,
+                                damage = b.short.toInt() and 0xFFFF,
+                            )
+                        )
+                    }
+                    NetMessage.RoundOver(winnerSlot, winnerTeam, winnerName, players, results)
+                }
                 MSG_MAP_SELECT -> NetMessage.MapSelect(b.get().toInt() and 0xFF)
                 MSG_ROOM_CLOSED -> NetMessage.RoomClosed(readString(b))
+                MSG_SET_READY -> NetMessage.SetReady(b.get().toInt() != 0)
+                MSG_KICK -> NetMessage.Kick(
+                    slot = b.get().toInt() and 0xFF,
+                    reason = readString(b),
+                )
                 else -> null
             }
         } catch (t: Throwable) {
@@ -338,6 +435,10 @@ object Protocol {
                     grenades = b.get().toInt() and 0xFF,
                     cooldown = (b.get().toInt() and 0xFF) / 255f,
                     grenadeRecharge = (b.get().toInt() and 0xFF) / 255f,
+                    team = b.get().toInt() and 0xFF,
+                    lives = b.get().toInt() and 0xFF,
+                    powerLeft = (b.get().toInt() and 0xFF) / 255f,
+                    lightLeft = (b.get().toInt() and 0xFF) / 255f,
                 )
             )
         }
@@ -374,6 +475,12 @@ object Protocol {
             events.add(EffectEvent(kind, x, y, radius))
         }
 
+        val killCount = b.short.toInt() and 0xFFFF
+        val kills = ArrayList<KillSnap>(killCount)
+        repeat(killCount) {
+            kills.add(KillSnap(killer = b.get().toInt(), victim = b.get().toInt() and 0xFF))
+        }
+
         return Snapshot(
             tick = tick,
             tanks = tanks,
@@ -384,6 +491,7 @@ object Protocol {
             sonarRadius = sonarRadius,
             sonarActive = sonarActive,
             events = events,
+            kills = kills,
         )
     }
 
@@ -404,9 +512,13 @@ object Protocol {
         b.put(players.size.toByte())
         for (p in players) {
             b.put(p.slot.toByte())
-            putString(b, p.name)
+            var flags = 0
+            if (p.isBot) flags = flags or 1
+            if (p.ready) flags = flags or 2
+            b.put(flags.toByte())
+            b.put(p.team.toByte())
             b.putShort(p.wins.toShort())
-            b.put(if (p.isBot) 1 else 0)
+            putString(b, p.name)
         }
     }
 
@@ -415,12 +527,43 @@ object Protocol {
         val out = ArrayList<PlayerInfo>(count)
         repeat(count) {
             val slot = b.get().toInt() and 0xFF
-            val name = readString(b)
+            val flags = b.get().toInt() and 0xFF
+            val team = b.get().toInt() and 0xFF
             val wins = b.short.toInt()
-            val bot = b.get().toInt() != 0
-            out.add(PlayerInfo(slot, name, wins, bot))
+            val name = readString(b)
+            out.add(
+                PlayerInfo(
+                    slot = slot,
+                    name = name,
+                    wins = wins,
+                    isBot = flags and 1 != 0,
+                    ready = flags and 2 != 0,
+                    team = team,
+                )
+            )
         }
         return out
+    }
+
+    private fun putRules(b: ByteBuffer, rules: RoundRules) {
+        var flags = 0
+        if (rules.teams) flags = flags or 1
+        if (rules.pickups) flags = flags or 2
+        b.put(flags.toByte())
+        b.put(rules.lives.toByte())
+        b.putShort(rules.timeLimitSec.toShort())
+    }
+
+    private fun readRules(b: ByteBuffer): RoundRules {
+        val flags = b.get().toInt() and 0xFF
+        val lives = b.get().toInt() and 0xFF
+        val timeLimit = b.short.toInt() and 0xFFFF
+        return RoundRules(
+            teams = flags and 1 != 0,
+            pickups = flags and 2 != 0,
+            lives = lives.coerceAtLeast(1),
+            timeLimitSec = timeLimit,
+        )
     }
 
     private fun putString(b: ByteBuffer, value: String) {

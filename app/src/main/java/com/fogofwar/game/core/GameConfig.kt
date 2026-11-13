@@ -81,6 +81,11 @@ object GameConfig {
     const val ROUND_OVER_DELAY = 5f
     /** Freeze at the start of a round so everybody sees 3-2-1. */
     const val ROUND_COUNTDOWN_MS = 3_000L
+    const val MAX_LIVES = 5
+    const val RESPAWN_DELAY = 5f
+    const val RESPAWN_INVULN = 2f
+    /** Team labels used by the lobby and the round-over screen. */
+    val TEAM_NAMES = arrayOf("Команда A", "Команда B")
 
     /** Snapshot tank flags. */
     const val FLAG_ALIVE = 1

@@ -6,7 +6,9 @@ import android.os.Looper
 import android.util.Log
 import com.fogofwar.game.core.EffectEvent
 import com.fogofwar.game.core.GameConfig
+import com.fogofwar.game.core.KillEvent
 import com.fogofwar.game.core.MapGenerator
+import com.fogofwar.game.core.RoundRules
 import com.fogofwar.game.core.TankInput
 import com.google.android.gms.nearby.Nearby
 import com.google.android.gms.nearby.connection.AdvertisingOptions
@@ -88,6 +90,16 @@ class NearbyNet(context: Context) {
     /** Diagnostics for the perf overlay; bytes counted per send/receive call. */
     val bytesSent = AtomicLong()
     val bytesReceived = AtomicLong()
+
+    @Volatile
+    var rules: RoundRules = RoundRules.CLASSIC
+        private set
+
+    @Volatile
+    var myReady: Boolean = false
+        private set
+
+    private val pendingKills = java.util.concurrent.ConcurrentLinkedQueue<KillSnap>()
     @Volatile
     var roomState: RoomState = RoomState.IDLE
         private set
@@ -271,12 +283,72 @@ class NearbyNet(context: Context) {
         updateAdvertising()
     }
 
+    /** Host changes teams/lives/time/pickups; the roster carries them to every client. */
+    fun updateRules(newRules: RoundRules) {
+        if (!isHost) return
+        rules = newRules.sanitized()
+        for ((slot, player) in humans) {
+            humans[slot] = player.copy(team = if (rules.teams) slot % 2 else 0)
+        }
+        broadcastRoster()
+    }
+
+    /** Client readiness; the host can still start at any moment. */
+    fun setReady(ready: Boolean) {
+        myReady = ready
+        if (isHost) {
+            humans[0]?.let { humans[0] = it.copy(ready = ready) }
+            notifyLobby()
+        } else {
+            hostEndpoint?.let { sendRaw(it, Protocol.setReady(ready)) }
+            notifyLobby()
+        }
+    }
+
+    /** Host-only: removes a player from the lobby and closes their connection. */
+    fun kick(slot: Int) {
+        if (!isHost || slot == 0) return
+        val endpoint = endpointBySlot[slot] ?: return
+        sendRaw(endpoint, Protocol.kick(slot, "Хост исключил вас"))
+        humans.remove(slot)
+        slotByEndpoint.remove(endpoint)
+        endpointBySlot.remove(slot)
+        lastInputSeq.remove(slot)
+        hostRound?.world?.requestRemove(slot)
+        broadcastRoster()
+        updateAdvertising()
+        client?.disconnectFromEndpoint(endpoint)
+    }
+
+    internal fun pushKills(kills: List<KillEvent>) {
+        for (kill in kills) pendingKills.add(KillSnap(kill.killer, kill.victim))
+    }
+
+    /** Deaths accumulated since the last render frame, for the kill feed. */
+    fun pollKills(): List<KillSnap> {
+        if (pendingKills.isEmpty()) return emptyList()
+        val out = ArrayList<KillSnap>()
+        while (true) {
+            val kill = pendingKills.poll() ?: break
+            out.add(kill)
+        }
+        return out
+    }
+
     fun startRound() {
         if (!isHost || (roomState != RoomState.HOSTING && roomState != RoomState.LOBBY)) return
         val players = ArrayList(humans.values.sortedBy { it.slot })
         if (players.isEmpty()) return
+        for (i in players.indices) {
+            val team = if (rules.teams) players[i].slot % 2 else 0
+            players[i] = players[i].copy(team = team)
+            humans[players[i].slot] = players[i]
+        }
         if (players.size == 1) {
-            for (i in 1..4) players.add(PlayerInfo(i, "Бот $i", 0, true))
+            for (i in 1..4) {
+                val team = if (rules.teams) i % 2 else 0
+                players.add(PlayerInfo(i, "Бот $i", 0, true, team = team))
+            }
         }
         val roundMapId = nextRoundMapId()
         lastRoundMapId = roundMapId
@@ -285,12 +357,13 @@ class NearbyNet(context: Context) {
         roomState = RoomState.IN_GAME
         lastWinner = null
         status = null
+        pendingKills.clear()
         recordRoundStarted()
         cancelAdvertisingUpdate()
         client?.stopAdvertising()
         advertisedName = null
-        broadcastRaw(Protocol.startRound(roundMapId, seed, players))
-        val round = HostRound(this, roundMapId, seed, players)
+        broadcastRaw(Protocol.startRound(roundMapId, seed, players, rules))
+        val round = HostRound(this, roundMapId, seed, players, rules)
         hostRound = round
         round.start()
         listener?.onRoundStarted(mapId)
@@ -393,10 +466,24 @@ class NearbyNet(context: Context) {
             hostRound = null
             client?.stopAdvertising()
             advertisedName = null
-            if (winnerSlot >= 0) {
+            val winnerTeam = round.world.winnerTeam
+            if (winnerTeam >= 0) {
+                for ((slot, player) in humans.entries.toList()) {
+                    if (player.team == winnerTeam) humans[slot] = player.copy(wins = player.wins + 1)
+                }
+            } else if (winnerSlot >= 0) {
                 humans[winnerSlot]?.let { humans[winnerSlot] = it.copy(wins = it.wins + 1) }
-                if (winnerSlot == 0) recordRoundWon()
             }
+            val hostWon = if (winnerTeam >= 0) {
+                humans[0]?.team == winnerTeam
+            } else {
+                winnerSlot == 0
+            }
+            if (hostWon) recordRoundWon()
+            for ((slot, player) in humans.entries.toList()) {
+                humans[slot] = player.copy(ready = false)
+            }
+            myReady = false
             lastWinner = winnerName
             roomState = RoomState.LOBBY
             // Pre-pick the next map so the lobby preview shows exactly what will be played.
@@ -602,11 +689,12 @@ class NearbyNet(context: Context) {
         hosts = discovered.values.filter { it.endpointId != hostEndpoint },
         roomCode = roomCode,
         status = status,
+        rules = rules,
     )
 
     private fun broadcastRoster() {
         val state = if (roomState == RoomState.IN_GAME) RoomState.IN_GAME else RoomState.LOBBY
-        val message = Protocol.roster(state, mapId, humans.values.sortedBy { it.slot })
+        val message = Protocol.roster(state, mapId, humans.values.sortedBy { it.slot }, rules)
         broadcastRaw(message)
         notifyLobby()
     }
@@ -776,7 +864,12 @@ class NearbyNet(context: Context) {
                         return
                     }
                     val slot = slotByEndpoint[endpointId] ?: return
-                    humans[slot] = humans[slot]?.copy(name = message.name) ?: PlayerInfo(slot, message.name)
+                    val existing = humans[slot]
+                    humans[slot] = existing?.copy(name = message.name) ?: PlayerInfo(
+                        slot = slot,
+                        name = message.name,
+                        team = if (rules.teams) slot % 2 else 0,
+                    )
                     // A join accepted just before StartRound may not have received it.
                     if (roomState == RoomState.IN_GAME) {
                         hostRound?.let { sendRaw(endpointId, it.startMessage()) }
@@ -804,6 +897,12 @@ class NearbyNet(context: Context) {
                         )
                     }
                 }
+                is NetMessage.SetReady -> {
+                    val slot = slotByEndpoint[endpointId] ?: return
+                    humans[slot]?.let { humans[slot] = it.copy(ready = message.ready) }
+                    broadcastRoster()
+                }
+                is NetMessage.Kick -> Unit
                 else -> Unit
             }
         } else {
@@ -821,13 +920,16 @@ class NearbyNet(context: Context) {
                 }
                 is NetMessage.Roster -> {
                     mapId = message.mapId
+                    rules = message.rules
                     humans.clear()
                     message.players.forEach { humans[it.slot] = it }
+                    myReady = humans[mySlot]?.ready ?: false
                     when {
                         message.roomState == RoomState.IN_GAME -> roomState = RoomState.IN_GAME
                         roomState == RoomState.IN_GAME -> {
                             roomState = RoomState.LOBBY
                             clientRound = null
+                            myReady = false
                             listener?.onRoundEnded(lastWinner)
                         }
                         roomState != RoomState.IDLE -> roomState = RoomState.LOBBY
@@ -837,13 +939,26 @@ class NearbyNet(context: Context) {
                 is NetMessage.StartRound -> startClientRound(message)
                 is NetMessage.SnapshotMsg -> {
                     if (message.snapshot.events.isNotEmpty()) pushEffects(message.snapshot.events)
+                    if (message.snapshot.kills.isNotEmpty()) {
+                        for (kill in message.snapshot.kills) pendingKills.add(kill)
+                    }
                     clientRound?.onSnapshot(message.snapshot)
                 }
                 is NetMessage.TileSync -> clientRound?.onTileChanges(message.changes)
                 is NetMessage.RoundOver -> {
                     lastWinner = message.winnerName.ifBlank { null }
-                    clientRound?.setRoundOver(message.winnerSlot, lastWinner)
-                    if (message.winnerSlot == mySlot) recordRoundWon()
+                    clientRound?.setRoundOver(
+                        message.winnerSlot,
+                        message.winnerTeam,
+                        lastWinner,
+                        message.results,
+                    )
+                    val iWon = if (message.winnerTeam >= 0) {
+                        humans[mySlot]?.team == message.winnerTeam
+                    } else {
+                        message.winnerSlot == mySlot
+                    }
+                    if (iWon) recordRoundWon()
                     listener?.onRoundEnded(lastWinner)
                 }
                 is NetMessage.MapSelect -> {
@@ -854,6 +969,12 @@ class NearbyNet(context: Context) {
                     val reason = message.reason
                     resetToIdle(notify = false)
                     reportError(reason)
+                }
+                is NetMessage.Kick -> {
+                    if (message.slot == mySlot) {
+                        resetToIdle(notify = false)
+                        reportError(message.reason.ifBlank { "Вас исключили из комнаты" })
+                    }
                 }
                 else -> Unit
             }
@@ -881,7 +1002,9 @@ class NearbyNet(context: Context) {
         if (clientRound != null && roomState == RoomState.IN_GAME && mapId == message.mapId) return
         val map = MapGenerator.generate(message.mapId, message.seed)
         mapId = message.mapId
-        clientRound = ClientRound(map, message.mapId, mySlot, message.players)
+        rules = message.rules
+        pendingKills.clear()
+        clientRound = ClientRound(map, message.mapId, mySlot, message.players, rules)
         message.players.forEach { humans[it.slot] = it }
         roomState = RoomState.IN_GAME
         lastWinner = null

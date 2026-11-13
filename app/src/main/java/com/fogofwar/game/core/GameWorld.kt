@@ -17,6 +17,7 @@ class GameWorld(
     val map: TileMap,
     val mapId: Int,
     val seed: Long,
+    val rules: RoundRules = RoundRules.CLASSIC,
 ) {
     val tanks = ArrayList<Tank>()
     val bullets = ArrayList<Bullet>()
@@ -29,6 +30,9 @@ class GameWorld(
     /** One-shot visual events since the last drain, streamed to clients. */
     private val pendingEffects = ArrayList<EffectEvent>()
 
+    /** Deaths since the last drain, streamed to clients for the kill feed. */
+    private val pendingKills = ArrayList<KillEvent>()
+
     var elapsed = 0f
         private set
     var zoneRadius = GameConfig.ZONE_START_RADIUS
@@ -40,6 +44,8 @@ class GameWorld(
     var roundOver = false
         private set
     var winnerSlot = -1
+        private set
+    var winnerTeam = -1
         private set
     var winnerName: String? = null
         private set
@@ -67,19 +73,19 @@ class GameWorld(
         lastInputNanos[slot] = System.nanoTime()
     }
 
-    fun addPlayer(slot: Int, name: String, isBot: Boolean = false): Tank {
+    fun addPlayer(slot: Int, name: String, isBot: Boolean = false, team: Int = 0): Tank {
         val spawn = map.spawns[slot % map.spawns.size]
         val x = (spawn[0] + 0.5f) * GameConfig.TILE
         val y = (spawn[1] + 0.5f) * GameConfig.TILE
         val dir = atan2(centerY - y, centerX - x)
-        val tank = Tank(slot, name, x, y, dir, dir, isBot)
+        val tank = Tank(slot, name, x, y, dir, dir, isBot, team, rules.lives)
         tanks.add(tank)
         if (tanks.size >= 2) startedWithOpponents = true
         return tank
     }
 
-    fun addBot(slot: Int, name: String): Tank {
-        val tank = addPlayer(slot, name, isBot = true)
+    fun addBot(slot: Int, name: String, team: Int = 0): Tank {
+        val tank = addPlayer(slot, name, isBot = true, team = team)
         bots[slot] = BotController(slot, rng)
         return tank
     }
@@ -111,6 +117,13 @@ class GameWorld(
         return out
     }
 
+    fun drainKills(): List<KillEvent> {
+        if (pendingKills.isEmpty()) return emptyList()
+        val out = ArrayList(pendingKills)
+        pendingKills.clear()
+        return out
+    }
+
     fun step(dt: Float) {
         if (roundOver) return
         var removed = pendingRemovals.poll()
@@ -122,7 +135,7 @@ class GameWorld(
 
         if (!pickupsInitialized) {
             pickupsInitialized = true
-            repeat(3) { spawnPickup() }
+            if (rules.pickups) repeat(3) { spawnPickup() }
         }
 
         for ((slot, bot) in bots) {
@@ -155,6 +168,10 @@ class GameWorld(
         if (!tank.alive) {
             tank.moving = false
             previousThrow[tank.slot] = input.throwGrenade
+            if (tank.respawnTimer > 0f) {
+                tank.respawnTimer -= dt
+                if (tank.respawnTimer <= 0f && tank.lives > 0) respawnTank(tank)
+            }
             return
         }
 
@@ -416,6 +433,7 @@ class GameWorld(
     }
 
     private fun updatePickups(dt: Float) {
+        if (!rules.pickups) return
         if (pickups.size < GameConfig.MAX_PICKUPS) {
             pickupTimer += dt
             if (pickupTimer >= GameConfig.PICKUP_INTERVAL) {
@@ -509,25 +527,91 @@ class GameWorld(
     fun damage(tank: Tank, sourceSlot: Int, ignoreInvuln: Boolean) {
         if (!tank.alive) return
         if (!ignoreInvuln && tank.invuln > 0f) return
+        val source = if (sourceSlot >= 0) tank(sourceSlot) else null
+        // Team mode: allies cannot hurt each other with bullets, grenades or mines.
+        if (rules.teams && source != null && source.team == tank.team) return
         tank.hp -= 1
         tank.lastDamageFrom = sourceSlot
+        if (source != null) source.damageDealt += 1
         if (!ignoreInvuln) tank.invuln = GameConfig.INVULN_TIME
         if (tank.hp <= 0) {
             tank.hp = 0
             tank.alive = false
+            tank.deaths += 1
+            if (source != null) source.kills += 1
+            pendingKills.add(KillEvent(sourceSlot, tank.slot))
+            if (tank.lives > 1) {
+                tank.lives -= 1
+                tank.respawnTimer = GameConfig.RESPAWN_DELAY
+            } else {
+                tank.lives = 0
+                tank.respawnTimer = 0f
+            }
             pendingEffects.add(EffectEvent(EffectKind.EXPLOSION, tank.x, tank.y, 54f))
         }
     }
 
+    private fun respawnTank(tank: Tank) {
+        tank.x = tank.spawnX
+        tank.y = tank.spawnY
+        val dir = atan2(centerY - tank.y, centerX - tank.x)
+        tank.bodyDir = dir
+        tank.turretDir = dir
+        tank.hp = GameConfig.MAX_HP
+        tank.alive = true
+        tank.invuln = GameConfig.RESPAWN_INVULN
+        tank.cooldown = 0f
+        tank.outsideTimer = 0f
+        tank.respawnTimer = 0f
+        tank.powerTime = 0f
+        tank.lightTime = 0f
+        tank.lastDamageFrom = -1
+    }
+
     private fun checkRoundOver() {
         if (roundOver) return
+        if (rules.timeLimitSec > 0 && elapsed >= rules.timeLimitSec) {
+            finishByScore()
+            return
+        }
         if (tanks.size < 2 && !startedWithOpponents) return
-        val alive = tanks.filter { it.alive }
-        if (alive.size <= 1) {
-            roundOver = true
-            val winner = alive.firstOrNull()
-            winnerSlot = winner?.slot ?: -1
-            winnerName = winner?.name
+        val remaining = tanks.filter { it.lives > 0 }
+        if (rules.teams) {
+            val teamsLeft = remaining.map { it.team }.toSet()
+            if (teamsLeft.size <= 1) finishRound(remaining.firstOrNull())
+        } else if (remaining.size <= 1) {
+            finishRound(remaining.firstOrNull())
+        }
+    }
+
+    private fun finishRound(winner: Tank?) {
+        if (roundOver) return
+        roundOver = true
+        winnerSlot = winner?.slot ?: -1
+        winnerTeam = if (rules.teams) winner?.team ?: -1 else -1
+        winnerName = when {
+            winner == null -> null
+            rules.teams -> GameConfig.TEAM_NAMES.getOrElse(winner.team) { "Команда" }
+            else -> winner.name
+        }
+    }
+
+    /** Time is up: most kills, then damage, then lives; a tie is a draw. */
+    private fun finishByScore() {
+        if (rules.teams) {
+            val scores = HashMap<Int, Int>()
+            for (tank in tanks) scores[tank.team] = (scores[tank.team] ?: 0) + tank.kills
+            val best = scores.entries.maxByOrNull { it.value } ?: return finishRound(null)
+            if (scores.values.count { it == best.value } > 1) return finishRound(null)
+            val representative = tanks.filter { it.team == best.key }
+                .maxByOrNull { it.damageDealt * 1000 + it.kills }
+            finishRound(representative)
+        } else {
+            val best = tanks.maxByOrNull { it.kills * 1000 + it.damageDealt } ?: return finishRound(null)
+            val tied = tanks.count {
+                it.kills == best.kills && it.damageDealt == best.damageDealt
+            } > 1
+            finishRound(if (tied) null else best)
         }
     }
 
@@ -536,6 +620,7 @@ class GameWorld(
         var bestDist = maxDistance
         for (other in tanks) {
             if (other === tank || !other.alive) continue
+            if (rules.teams && other.team == tank.team) continue
             val d = tank.distanceTo(other.x, other.y)
             if (d < bestDist) {
                 bestDist = d

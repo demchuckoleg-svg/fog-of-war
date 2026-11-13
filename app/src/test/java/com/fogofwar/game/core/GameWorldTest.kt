@@ -6,7 +6,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.hypot
-
 class GameWorldTest {
 
     @Test
@@ -307,5 +306,63 @@ class GameWorldTest {
             world.step(GameConfig.TICK_DT)
         }
         assertTrue("grenade should explode", world.grenades.isEmpty())
+    }
+
+    @Test
+    fun teamModeBlocksFriendlyFire() {
+        val world = GameWorld(
+            MapGenerator.generate(1, 5L),
+            1,
+            5L,
+            RoundRules(teams = true, lives = 1),
+        )
+        val allyA = world.addPlayer(0, "A", team = 0)
+        val allyB = world.addPlayer(1, "B", team = 0)
+        val enemy = world.addPlayer(2, "C", team = 1)
+
+        world.damage(allyB, allyA.slot, ignoreInvuln = false)
+        assertEquals(GameConfig.MAX_HP, allyB.hp)
+
+        world.damage(enemy, allyA.slot, ignoreInvuln = false)
+        assertEquals(GameConfig.MAX_HP - 1, enemy.hp)
+    }
+
+    @Test
+    fun livesModeRespawnsAtSpawn() {
+        val rules = RoundRules(lives = 3)
+        val world = GameWorld(MapGenerator.generate(1, 6L), 1, 6L, rules)
+        val attacker = world.addPlayer(0, "A")
+        val victim = world.addPlayer(1, "B")
+        val spawnX = victim.spawnX
+        val spawnY = victim.spawnY
+
+        repeat(3) { world.damage(victim, attacker.slot, ignoreInvuln = true) }
+
+        assertFalse(victim.alive)
+        assertEquals(2, victim.lives)
+        repeat((GameConfig.RESPAWN_DELAY * GameConfig.TICK_HZ).toInt() + 2) {
+            world.step(GameConfig.TICK_DT)
+        }
+        assertTrue("tank should respawn", victim.alive)
+        assertEquals(GameConfig.MAX_HP, victim.hp)
+        assertEquals(spawnX, victim.x, 0.01f)
+        assertEquals(spawnY, victim.y, 0.01f)
+    }
+
+    @Test
+    fun timeLimitAwardsTheMostKills() {
+        val world = GameWorld(
+            MapGenerator.generate(1, 7L),
+            1,
+            7L,
+            RoundRules(timeLimitSec = 1),
+        )
+        val leader = world.addPlayer(0, "A")
+        world.addPlayer(1, "B")
+        leader.kills = 2
+        repeat(GameConfig.TICK_HZ + 2) { world.step(GameConfig.TICK_DT) }
+        assertTrue(world.roundOver)
+        assertEquals(0, world.winnerSlot)
+        assertEquals("A", world.winnerName)
     }
 }

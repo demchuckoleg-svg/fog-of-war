@@ -3,6 +3,7 @@ package com.fogofwar.game.net
 import com.fogofwar.game.core.EffectEvent
 import com.fogofwar.game.core.EffectKind
 import com.fogofwar.game.core.GameConfig
+import com.fogofwar.game.core.RoundRules
 import com.fogofwar.game.core.Tile
 import com.fogofwar.game.core.TileChange
 import org.junit.Assert.assertEquals
@@ -16,10 +17,10 @@ class ProtocolTest {
     @Test
     fun rosterRoundTrip() {
         val players = listOf(
-            PlayerInfo(0, "Хост", 2),
-            PlayerInfo(1, "Бот 1", 0, isBot = true),
+            PlayerInfo(0, "Хост", 2, ready = true, team = 0),
+            PlayerInfo(1, "Бот 1", 0, isBot = true, team = 1),
         )
-        val bytes = Protocol.roster(RoomState.LOBBY, 2, players)
+        val bytes = Protocol.roster(RoomState.LOBBY, 2, players, RoundRules(teams = true, lives = 3))
         val message = Protocol.parse(bytes)
         assertTrue(message is NetMessage.Roster)
         val roster = message as NetMessage.Roster
@@ -27,7 +28,30 @@ class ProtocolTest {
         assertEquals(2, roster.mapId)
         assertEquals(2, roster.players.size)
         assertEquals("Хост", roster.players[0].name)
+        assertTrue(roster.players[0].ready)
+        assertEquals(1, roster.players[1].team)
         assertTrue(roster.players[1].isBot)
+        assertTrue(roster.rules.teams)
+        assertEquals(3, roster.rules.lives)
+    }
+
+    @Test
+    fun roundOverCarriesTeamAndResults() {
+        val players = listOf(PlayerInfo(0, "Хост", 1, team = 0), PlayerInfo(1, "Гость", 0, team = 1))
+        val bytes = Protocol.roundOver(
+            winnerSlot = 1,
+            winnerTeam = 1,
+            winnerName = "Команда B",
+            players = players,
+            results = listOf(RoundResult(1, 3, 1, 7), RoundResult(0, 1, 2, 4)),
+        )
+        val message = Protocol.parse(bytes) as NetMessage.RoundOver
+        assertEquals(1, message.winnerSlot)
+        assertEquals(1, message.winnerTeam)
+        assertEquals("Команда B", message.winnerName)
+        assertEquals(2, message.results.size)
+        assertEquals(3, message.results[0].kills)
+        assertEquals(7, message.results[0].damage)
     }
 
     @Test
@@ -39,6 +63,7 @@ class ProtocolTest {
                     0, 100.5f, 200.25f, 0.2f, 1.2f, 3,
                     GameConfig.FLAG_ALIVE or GameConfig.FLAG_LIGHTS or GameConfig.FLAG_MOVING,
                     2, 0.5f,
+                    team = 1, lives = 2, powerLeft = 0.5f, lightLeft = 0.25f,
                 ),
                 TankSnap(1, 900f, 910f, -0.4f, -0.9f, 0, 0, 0, 0f),
             ),
@@ -49,6 +74,7 @@ class ProtocolTest {
             sonarRadius = 250f,
             sonarActive = true,
             events = listOf(EffectEvent(EffectKind.EXPLOSION, 10f, 20f, 64f)),
+            kills = listOf(KillSnap(killer = 0, victim = 1)),
         )
         val message = Protocol.parse(Protocol.snapshot(snapshot))
         assertTrue(message is NetMessage.SnapshotMsg)
@@ -59,6 +85,10 @@ class ProtocolTest {
         assertEquals(200.25f, parsed.tanks[0].y, 0.001f)
         assertEquals(1.2f, parsed.tanks[0].turretDir, 0.001f)
         assertEquals(2, parsed.tanks[0].grenades)
+        assertEquals(1, parsed.tanks[0].team)
+        assertEquals(2, parsed.tanks[0].lives)
+        assertEquals(0.5f, parsed.tanks[0].powerLeft, 0.01f)
+        assertEquals(0.25f, parsed.tanks[0].lightLeft, 0.01f)
         assertTrue(parsed.tanks[0].alive)
         assertTrue(parsed.tanks[0].lightsOn)
         assertTrue(parsed.tanks[0].moving)
@@ -74,6 +104,9 @@ class ProtocolTest {
         assertEquals(1, parsed.events.size)
         assertEquals(EffectKind.EXPLOSION, parsed.events[0].kind)
         assertEquals(64f, parsed.events[0].radius, 0.001f)
+        assertEquals(1, parsed.kills.size)
+        assertEquals(0, parsed.kills[0].killer)
+        assertEquals(1, parsed.kills[0].victim)
     }
 
     @Test
