@@ -29,6 +29,8 @@ class ClientRound(
     @Volatile
     private var roundOver = false
 
+    val roundFinished: Boolean get() = roundOver
+
     @Volatile
     private var winnerName: String? = null
 

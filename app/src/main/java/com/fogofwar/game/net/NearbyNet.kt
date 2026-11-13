@@ -733,7 +733,7 @@ class NearbyNet(context: Context) {
                 c.rejectConnection(endpointId)
                 return
             }
-            if (isHost && humans.size + pendingSlots.size >= GameConfig.MAX_PLAYERS) {
+            if (isHost && humans.size + pendingNames.size >= GameConfig.MAX_PLAYERS) {
                 pendingNames.remove(endpointId)
                 c.rejectConnection(endpointId)
                 return
@@ -787,6 +787,13 @@ class NearbyNet(context: Context) {
                 // The endpoint becomes a player only after a valid Hello.
                 pendingSlots[endpointId] = slot
                 sendRaw(endpointId, Protocol.welcome(slot))
+                mainHandler.postDelayed({
+                    if (pendingSlots[endpointId] == slot) {
+                        pendingSlots.remove(endpointId)
+                        pendingNames.remove(endpointId)
+                        client?.disconnectFromEndpoint(endpointId)
+                    }
+                }, 10_000L)
                 earlyHellos.remove(endpointId)?.let { handleClientHello(endpointId, it) }
             } else {
                 // A join cancelled from the rooms screen can still complete later.
@@ -938,6 +945,12 @@ class NearbyNet(context: Context) {
                     myReady = humans[mySlot]?.ready ?: false
                     when {
                         message.roomState == RoomState.IN_GAME -> roomState = RoomState.IN_GAME
+                        roomState == RoomState.IN_GAME &&
+                            clientRound?.roundFinished != true -> {
+                            // A lobby roster that overtook the start message: keep the round.
+                            notifyLobby()
+                            return
+                        }
                         roomState == RoomState.IN_GAME -> {
                             roomState = RoomState.LOBBY
                             clientRound = null
@@ -994,6 +1007,7 @@ class NearbyNet(context: Context) {
     }
 
     private fun handleClientHello(endpointId: String, message: NetMessage.Hello) {
+        if (rejectedEndpoints.contains(endpointId)) return
         if (message.version != Protocol.VERSION) {
             rejectEndpoint(endpointId, VERSION_MISMATCH_MESSAGE)
             return
