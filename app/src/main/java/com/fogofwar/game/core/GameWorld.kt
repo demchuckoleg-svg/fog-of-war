@@ -615,14 +615,14 @@ class GameWorld(
             if (tied) return finishRound(null)
             val representative = tanks.filter { it.team == best.key }
                 .maxWithOrNull(
-                    compareByDescending<Tank> { it.kills }
-                        .thenByDescending { it.damageDealt }
+                    compareBy<Tank> { it.kills }
+                        .thenBy { it.damageDealt }
                 )
             finishRound(representative)
         } else {
-            val comparator = compareByDescending<Tank> { it.kills }
-                .thenByDescending { it.damageDealt }
-                .thenByDescending { it.lives }
+            val comparator = compareBy<Tank> { it.kills }
+                .thenBy { it.damageDealt }
+                .thenBy { it.lives }
             val best = tanks.maxWithOrNull(comparator) ?: return finishRound(null)
             val tied = tanks.count { comparator.compare(it, best) == 0 } > 1
             finishRound(if (tied) null else best)
