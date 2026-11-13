@@ -182,7 +182,7 @@ class NearbyNet(context: Context) {
         roomCode = RoomDescriptor.newCode()
         mapId = 0
         status = null
-        humans[0] = PlayerInfo(0, nickname)
+        humans[0] = PlayerInfo(0, nickname, ready = true)
         updateAdvertising(immediate = true)
         notifyLobby()
     }
@@ -317,7 +317,10 @@ class NearbyNet(context: Context) {
         hostRound?.world?.requestRemove(slot)
         broadcastRoster()
         updateAdvertising()
-        client?.disconnectFromEndpoint(endpoint)
+        // Give the kick payload a moment to flush before closing the endpoint.
+        mainHandler.postDelayed({
+            client?.disconnectFromEndpoint(endpoint)
+        }, 300L)
     }
 
     internal fun pushKills(kills: List<KillEvent>) {
@@ -481,7 +484,7 @@ class NearbyNet(context: Context) {
             }
             if (hostWon) recordRoundWon()
             for ((slot, player) in humans.entries.toList()) {
-                humans[slot] = player.copy(ready = false)
+                humans[slot] = player.copy(ready = slot == 0)
             }
             myReady = false
             lastWinner = winnerName
