@@ -47,5 +47,6 @@
     <string name="settings_hw">Аппаратный канвас</string>
     <string name="settings_hw_hint">Выключите, если видите артефакты отрисовки</string>
     <string name="settings_confirm">Спрашивать перед выходом из боя</string>
+    <string name="stats_lifetime">Побед: %1$d · боёв: %2$d</string>
     <string name="back">Назад</string>
 </resources>

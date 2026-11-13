@@ -66,6 +66,19 @@ class NearbyNet(context: Context) {
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val prefs = context.applicationContext.getSharedPreferences("fogofwar", Context.MODE_PRIVATE)
+
+    /** Lifetime local profile; each device records its own rounds. */
+    val lifetimeGames: Int get() = prefs.getInt("stats_games", 0)
+    val lifetimeWins: Int get() = prefs.getInt("stats_wins", 0)
+
+    private fun recordRoundStarted() {
+        prefs.edit().putInt("stats_games", lifetimeGames + 1).apply()
+    }
+
+    private fun recordRoundWon() {
+        prefs.edit().putInt("stats_wins", lifetimeWins + 1).apply()
+    }
 
     var nickname: String = "Танк"
     @Volatile
@@ -272,6 +285,7 @@ class NearbyNet(context: Context) {
         roomState = RoomState.IN_GAME
         lastWinner = null
         status = null
+        recordRoundStarted()
         cancelAdvertisingUpdate()
         client?.stopAdvertising()
         advertisedName = null
@@ -381,6 +395,7 @@ class NearbyNet(context: Context) {
             advertisedName = null
             if (winnerSlot >= 0) {
                 humans[winnerSlot]?.let { humans[winnerSlot] = it.copy(wins = it.wins + 1) }
+                if (winnerSlot == 0) recordRoundWon()
             }
             lastWinner = winnerName
             roomState = RoomState.LOBBY
@@ -828,6 +843,7 @@ class NearbyNet(context: Context) {
                 is NetMessage.RoundOver -> {
                     lastWinner = message.winnerName.ifBlank { null }
                     clientRound?.setRoundOver(message.winnerSlot, lastWinner)
+                    if (message.winnerSlot == mySlot) recordRoundWon()
                     listener?.onRoundEnded(lastWinner)
                 }
                 is NetMessage.MapSelect -> {
@@ -870,6 +886,7 @@ class NearbyNet(context: Context) {
         roomState = RoomState.IN_GAME
         lastWinner = null
         status = null
+        recordRoundStarted()
         client?.stopDiscovery()
         startSnapshotWatchdog()
         listener?.onRoundStarted(message.mapId)

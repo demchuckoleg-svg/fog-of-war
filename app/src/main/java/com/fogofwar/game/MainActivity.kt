@@ -160,6 +160,7 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
     }
 
     private fun render(state: LobbyUiState) {
+        binding.statsText.text = getString(R.string.stats_lifetime, net.lifetimeWins, net.lifetimeGames)
         val inLobby = state.inLobby && state.roomState != RoomState.DISCOVERING
         binding.menuPanel.visibility = if (inLobby) View.GONE else View.VISIBLE
         binding.lobbyPanel.visibility = if (inLobby) View.VISIBLE else View.GONE
