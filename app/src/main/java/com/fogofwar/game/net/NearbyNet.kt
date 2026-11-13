@@ -55,7 +55,7 @@ class NearbyNet(context: Context) {
         private const val ENDPOINT_LOST_GRACE_MS = 3_000L
 
         /** Client gives up when the host stops sending snapshots (frozen app, dead link). */
-        private const val SNAPSHOT_TIMEOUT_MS = 2_500L
+        private const val SNAPSHOT_TIMEOUT_MS = 5_000L
     }
 
     private val client: ConnectionsClient? = try {

@@ -30,6 +30,7 @@ import com.fogofwar.game.core.angleDelta
 import com.fogofwar.game.net.GameFrame
 import com.fogofwar.game.net.NearbyNet
 import com.fogofwar.game.net.RenderTank
+import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.hypot
@@ -52,6 +53,7 @@ class GameView @JvmOverloads constructor(
     private val density = resources.displayMetrics.density
     private val scaledDensity = resources.displayMetrics.scaledDensity
     private val prefs = context.getSharedPreferences("fogofwar", Context.MODE_PRIVATE)
+    private val stickScale = prefs.getFloat("stick_scale", 1f).coerceIn(0.7f, 1.4f)
     private val vibrator: Vibrator? = run {
         val ctx = context.applicationContext
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -225,6 +227,7 @@ class GameView @JvmOverloads constructor(
     private var renderRestarts = 0
     private var lastRestartAt = 0L
     private var renderErrorUntil = 0L
+    @Volatile private var countdownUntil = 0L
 
     @Volatile private var safeLeft = 0
     @Volatile private var safeTop = 0
@@ -235,13 +238,13 @@ class GameView @JvmOverloads constructor(
         holder.addCallback(this)
         isFocusable = true
         keepScreenOn = true
+        hardwareCanvas = prefs.getBoolean("hw_canvas", true)
         perfMode = when {
             !prefs.getBoolean("perf_overlay", false) -> 0
-            prefs.getBoolean("hw_canvas", false) -> 2
+            hardwareCanvas -> 2
             else -> 1
         }
         perf.enabled = perfMode > 0
-        hardwareCanvas = perfMode == 2
         SpriteAtlas.warmUp(context)
     }
 
@@ -250,6 +253,11 @@ class GameView @JvmOverloads constructor(
         safeTop = top
         safeRight = right
         safeBottom = bottom
+    }
+
+    /** Shows a local 3-2-1 overlay; the host freezes the simulation for the same time. */
+    fun startCountdown(durationMs: Long = GameConfig.ROUND_COUNTDOWN_MS) {
+        countdownUntil = SystemClock.elapsedRealtime() + durationMs
     }
 
     /** Short haptic tick; disabled in settings if the player prefers silence. */
@@ -442,7 +450,7 @@ class GameView @JvmOverloads constructor(
             x >= minimapLeft && x <= minimapLeft + minimapSize &&
             y >= minimapTop && y <= minimapTop + minimapSize
         ) {
-            // Five taps on the minimap toggle the diagnostics overlay.
+            // Five taps on the minimap cycle: overlay off -> software -> hardware.
             if (tapNow - perfTapAt > 1_500L) perfTapCount = 0
             perfTapAt = tapNow
             perfTapCount++
@@ -450,12 +458,12 @@ class GameView @JvmOverloads constructor(
                 perfTapCount = 0
                 perfMode = (perfMode + 1) % 3
                 perf.enabled = perfMode > 0
-                hardwareCanvas = perfMode == 2
                 hardwareFallback = false
-                prefs.edit()
-                    .putBoolean("perf_overlay", perf.enabled)
-                    .putBoolean("hw_canvas", hardwareCanvas)
-                    .apply()
+                if (perfMode != 0) {
+                    hardwareCanvas = perfMode == 2
+                    prefs.edit().putBoolean("hw_canvas", hardwareCanvas).apply()
+                }
+                prefs.edit().putBoolean("perf_overlay", perf.enabled).apply()
                 val message = when (perfMode) {
                     1 -> "Оверлей: software-канвас"
                     2 -> "Оверлей: hardware-канвас"
@@ -680,10 +688,10 @@ class GameView @JvmOverloads constructor(
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        moveRadius = 58f * density
-        moveKnobRadius = 24f * density
-        aimRadius = 50f * density
-        aimKnobRadius = 21f * density
+        moveRadius = 58f * density * stickScale
+        moveKnobRadius = 24f * density * stickScale
+        aimRadius = 50f * density * stickScale
+        aimKnobRadius = 21f * density * stickScale
         grenadeRadius = 36f * density
         lightRadius = 24f * density
         moveBaseX = 104f * density
@@ -700,15 +708,19 @@ class GameView @JvmOverloads constructor(
 
     private fun drawFrame(canvas: Canvas, frame: GameFrame?) {
         canvas.drawColor(COLOR_VOID)
+        val now = SystemClock.elapsedRealtime()
         if (frame == null) {
-            drawCenteredText(canvas, "СОЕДИНЕНИЕ…", canvas.height / 2f, 20f, COLOR_DIM)
-            drawCenteredText(canvas, "ожидание состояния от хоста", canvas.height / 2f + 34f * density, 13f, COLOR_DIM)
+            if (now < countdownUntil) {
+                drawCountdown(canvas, countdownUntil - now)
+            } else {
+                drawCenteredText(canvas, "СОЕДИНЕНИЕ…", canvas.height / 2f, 20f, COLOR_DIM)
+                drawCenteredText(canvas, "ожидание состояния от хоста", canvas.height / 2f + 34f * density, 13f, COLOR_DIM)
+            }
             return
         }
-        if (hintUntil == 0L) hintUntil = SystemClock.elapsedRealtime() + 6500L
+        if (hintUntil == 0L) hintUntil = now + 6500L
 
         val me = frame.me
-        val now = SystemClock.elapsedRealtime()
         val drawStart = System.nanoTime()
         updateFeed(frame, now)
         updateLastSeen(frame, now)
@@ -764,6 +776,8 @@ class GameView @JvmOverloads constructor(
 
         drawHud(canvas, frame, now)
         val hudDone = System.nanoTime()
+
+        if (now < countdownUntil) drawCountdown(canvas, countdownUntil - now)
 
         if (perf.enabled) {
             perf.sections[0] = (worldDone - drawStart) / 1_000_000f
@@ -1614,6 +1628,14 @@ class GameView @JvmOverloads constructor(
         textPaint.textSize = sizeSp * scaledDensity
         textPaint.color = color
         canvas.drawText(text, canvas.width / 2f, y, textPaint)
+    }
+
+    private fun drawCountdown(canvas: Canvas, remainingMs: Long) {
+        val number = ceil(remainingMs / 1000f).toInt().coerceIn(1, 3)
+        hudPaint.color = 0x55000000
+        canvas.drawRect(0f, 0f, canvas.width.toFloat(), canvas.height.toFloat(), hudPaint)
+        drawCenteredText(canvas, "ПРИГОТОВЬСЯ", canvas.height / 2f - 90f * density, 16f, COLOR_DIM)
+        drawCenteredText(canvas, number.toString(), canvas.height / 2f + 30f * density, 64f, 0xFFFFE27A.toInt())
     }
 
     private data class Blip(val x: Float, val y: Float, val bornAt: Long)

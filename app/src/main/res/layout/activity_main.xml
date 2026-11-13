@@ -210,5 +210,15 @@
                 android:textColor="@color/text_dim"
                 android:textSize="13sp" />
         </LinearLayout>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/settingsButton"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="18dp"
+            android:text="@string/settings"
+            android:textColor="@color/text_dim"
+            android:textSize="15sp" />
     </LinearLayout>
 </ScrollView>

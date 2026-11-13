@@ -68,6 +68,9 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
         binding.discoverButton.setOnClickListener {
             ensurePermissions(PendingAction.DISCOVER)
         }
+        binding.settingsButton.setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
         binding.startButton.setOnClickListener { net.startRound() }
         binding.leaveButton.setOnClickListener { net.leaveRoom() }
 

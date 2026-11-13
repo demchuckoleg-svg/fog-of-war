@@ -17,7 +17,10 @@ class ClientRound(
 ) {
     private class Timed(val snapshot: Snapshot, val atMs: Long)
 
-    private val buffer = ArrayList<Timed>()
+    private val buffer = arrayOfNulls<Timed>(12)
+    private var bufferStart = 0
+    private var bufferSize = 0
+    private val scratch = ArrayList<Timed>(12)
     private val pendingTileChanges = java.util.concurrent.ConcurrentLinkedQueue<TileChange>()
     private val playersBySlot: Map<Int, PlayerInfo> = players.associateBy { it.slot }
 
@@ -39,8 +42,13 @@ class ClientRound(
         lastSnapshotAt = System.nanoTime() / 1_000_000L
         val now = System.nanoTime() / 1_000_000L
         synchronized(buffer) {
-            buffer.add(Timed(snapshot, now))
-            while (buffer.size > 12) buffer.removeAt(0)
+            val index = (bufferStart + bufferSize) % buffer.size
+            buffer[index] = Timed(snapshot, now)
+            if (bufferSize < buffer.size) {
+                bufferSize++
+            } else {
+                bufferStart = (bufferStart + 1) % buffer.size
+            }
         }
     }
 
@@ -64,14 +72,26 @@ class ClientRound(
 
     fun frameAt(nowMs: Long): GameFrame? {
         applyPendingTileChanges()
-        val copy = synchronized(buffer) { ArrayList(buffer) }
-        if (copy.isEmpty()) return null
+        val count = synchronized(buffer) {
+            scratch.clear()
+            for (i in 0 until bufferSize) {
+                scratch.add(buffer[(bufferStart + i) % buffer.size] ?: break)
+            }
+            scratch.size
+        }
+        if (count == 0) return null
 
         val target = nowMs - GameConfig.INTERPOLATION_DELAY_MS
-        var index = copy.indexOfFirst { it.atMs >= target }
-        if (index < 0) index = copy.lastIndex
-        val b = copy[index]
-        val a = if (index > 0) copy[index - 1] else b
+        var index = -1
+        for (i in 0 until count) {
+            if (scratch[i].atMs >= target) {
+                index = i
+                break
+            }
+        }
+        if (index < 0) index = count - 1
+        val b = scratch[index]
+        val a = if (index > 0) scratch[index - 1] else b
         val span = (b.atMs - a.atMs).toFloat()
         val alpha = if (span <= 1f) 1f else ((target - a.atMs) / span).coerceIn(0f, 1f)
 

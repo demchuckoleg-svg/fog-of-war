@@ -38,6 +38,7 @@ class HostRound(
 
     private var tick = 0L
     private var overTicks = -1L
+    private var startAtNanos = 0L
     private val snapshotEvents = ArrayList<EffectEvent>()
 
     init {
@@ -48,6 +49,9 @@ class HostRound(
     }
 
     fun start() {
+        // Everybody gets a short 3-2-1 freeze before the first simulation tick.
+        startAtNanos = System.nanoTime() + GameConfig.ROUND_COUNTDOWN_MS * 1_000_000L
+        frame = buildFrame()
         scope.launch { loop() }
     }
 
@@ -65,6 +69,12 @@ class HostRound(
         val tickNanos = 1_000_000_000L / GameConfig.TICK_HZ
         val snapshotEvery = (GameConfig.TICK_HZ / GameConfig.SNAPSHOT_HZ).coerceAtLeast(1)
         while (!finished) {
+            val countdownLeft = startAtNanos - System.nanoTime()
+            if (countdownLeft > 0L) {
+                delay((countdownLeft / 1_000_000L).coerceIn(1L, 50L))
+                next = System.nanoTime()
+                continue
+            }
             val now = System.nanoTime()
             if (now < next) {
                 delay(((next - now) / 1_000_000L).coerceAtLeast(1L))

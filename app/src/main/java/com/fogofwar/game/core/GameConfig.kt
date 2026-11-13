@@ -79,6 +79,8 @@ object GameConfig {
     const val GRENADE_BLAST_RADIUS = 92f
 
     const val ROUND_OVER_DELAY = 5f
+    /** Freeze at the start of a round so everybody sees 3-2-1. */
+    const val ROUND_COUNTDOWN_MS = 3_000L
 
     /** Snapshot tank flags. */
     const val FLAG_ALIVE = 1

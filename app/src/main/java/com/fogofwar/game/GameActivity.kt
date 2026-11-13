@@ -20,6 +20,7 @@ class GameActivity : AppCompatActivity(), NearbyNet.Listener {
 
     private lateinit var binding: ActivityGameBinding
     private val net: NearbyNet get() = (application as App).net
+    private val prefs by lazy { getSharedPreferences("fogofwar", MODE_PRIVATE) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -45,10 +46,18 @@ class GameActivity : AppCompatActivity(), NearbyNet.Listener {
             (view as GameView).setSafeInsets(cut.left, cut.top, cut.right, cut.bottom)
             insets
         }
+
+        if (net.roomState == RoomState.IN_GAME && (net.currentFrame()?.tick ?: 0L) <= 1L) {
+            binding.gameView.startCountdown()
+        }
     }
 
     private fun confirmLeave() {
         if (isFinishing) return
+        if (!prefs.getBoolean("confirm_exit", true)) {
+            leave()
+            return
+        }
         val host = net.isHost
         AlertDialog.Builder(this)
             .setTitle(if (host) "Закрыть комнату?" else "Выйти из боя?")

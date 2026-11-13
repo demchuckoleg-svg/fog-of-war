@@ -38,4 +38,14 @@
     <string name="rooms_state_game">бой</string>
     <string name="rooms_join">Войти</string>
     <string name="room_code">Код: %1$s</string>
+
+    <string name="settings">Настройки</string>
+    <string name="settings_stick">Размер стиков</string>
+    <string name="settings_percent">%1$d%%</string>
+    <string name="settings_haptics">Вибрация</string>
+    <string name="settings_perf">Оверлей производительности</string>
+    <string name="settings_hw">Аппаратный канвас</string>
+    <string name="settings_hw_hint">Выключите, если видите артефакты отрисовки</string>
+    <string name="settings_confirm">Спрашивать перед выходом из боя</string>
+    <string name="back">Назад</string>
 </resources>
