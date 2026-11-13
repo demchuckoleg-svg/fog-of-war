@@ -6,6 +6,14 @@ import com.fogofwar.game.core.TileChange
 import com.fogofwar.game.core.TileMap
 import com.fogofwar.game.core.lerpAngle
 
+/** Diagnostics for the perf overlay: is the client stuttering because packets are late? */
+data class ClientNetStats(
+    val lastGapMs: Long,
+    val maxGapMs: Long,
+    val starvedPercent: Int,
+    val buffered: Int,
+)
+
 /**
  * Client side of a round: stores the snapshots that arrive from the host and
  * renders a slightly delayed interpolated frame, so 15 Hz snapshots look smooth.
@@ -25,6 +33,15 @@ class ClientRound(
     private val scratch = ArrayList<Timed>(12)
     private val pendingTileChanges = java.util.concurrent.ConcurrentLinkedQueue<TileChange>()
     private val playersBySlot: Map<Int, PlayerInfo> = players.associateBy { it.slot }
+
+    /** Local render timeline in host simulation ticks; advances independently of packet jitter. */
+    private var renderTick = Double.NaN
+    private var lastFrameAtMs = -1L
+    private var snapshotsReceived = 0
+    private var lastGapMs = 0L
+    private var maxGapMs = 0L
+    private var starvedFrames = 0
+    private var totalFrames = 0
 
     @Volatile
     private var roundOver = false
@@ -49,8 +66,16 @@ class ClientRound(
         private set
 
     fun onSnapshot(snapshot: Snapshot) {
-        lastSnapshotAt = System.nanoTime() / 1_000_000L
         val now = System.nanoTime() / 1_000_000L
+        if (snapshotsReceived > 0) {
+            val gap = now - lastSnapshotAt
+            if (gap in 0L..5_000L) {
+                lastGapMs = gap
+                if (gap > maxGapMs) maxGapMs = gap
+            }
+        }
+        snapshotsReceived++
+        lastSnapshotAt = now
         synchronized(buffer) {
             val index = (bufferStart + bufferSize) % buffer.size
             buffer[index] = Timed(snapshot, now)
@@ -61,6 +86,13 @@ class ClientRound(
             }
         }
     }
+
+    fun stats(): ClientNetStats = ClientNetStats(
+        lastGapMs = lastGapMs,
+        maxGapMs = maxGapMs,
+        starvedPercent = if (totalFrames > 0) starvedFrames * 100 / totalFrames else 0,
+        buffered = bufferSize,
+    )
 
     /** Tile changes arrive as reliable messages; the render thread applies them safely. */
     fun onTileChanges(changes: List<TileChange>) {
@@ -98,10 +130,40 @@ class ClientRound(
         }
         if (count == 0) return null
 
-        val target = nowMs - GameConfig.INTERPOLATION_DELAY_MS
+        val newestTick = scratch[count - 1].snapshot.tick
+        val oldestTick = scratch[0].snapshot.tick
+        val delayTicks = GameConfig.INTERPOLATION_DELAY_MS * GameConfig.TICK_HZ / 1000.0
+        if (renderTick.isNaN()) {
+            renderTick = newestTick - delayTicks
+        } else {
+            val elapsed = if (lastFrameAtMs > 0L) {
+                (nowMs - lastFrameAtMs).coerceIn(0L, 250L)
+            } else {
+                0L
+            }
+            renderTick += elapsed * GameConfig.TICK_HZ / 1000.0
+            val wanted = newestTick - delayTicks
+            val drift = wanted - renderTick
+            if (kotlin.math.abs(drift) > 10.0) {
+                // Pause/resume or a long network stall: jump instead of speeding up for seconds.
+                renderTick = wanted
+            } else {
+                renderTick += drift * 0.06
+            }
+        }
+        lastFrameAtMs = nowMs
+        if (renderTick < oldestTick.toDouble()) renderTick = oldestTick.toDouble()
+        val starved = renderTick > newestTick.toDouble()
+        if (starved) {
+            renderTick = newestTick.toDouble()
+            starvedFrames++
+        }
+        totalFrames++
+
+        val targetTick = renderTick
         var index = -1
         for (i in 0 until count) {
-            if (scratch[i].atMs >= target) {
+            if (scratch[i].snapshot.tick >= targetTick) {
                 index = i
                 break
             }
@@ -109,8 +171,12 @@ class ClientRound(
         if (index < 0) index = count - 1
         val b = scratch[index]
         val a = if (index > 0) scratch[index - 1] else b
-        val span = (b.atMs - a.atMs).toFloat()
-        val alpha = if (span <= 1f) 1f else ((target - a.atMs) / span).coerceIn(0f, 1f)
+        val span = (b.snapshot.tick - a.snapshot.tick).toFloat()
+        val alpha = if (span <= 0f) {
+            1f
+        } else {
+            ((targetTick - a.snapshot.tick) / span).toFloat().coerceIn(0f, 1f)
+        }
 
         val tanks = b.snapshot.tanks.map { tb ->
             val ta = a.snapshot.tanks.firstOrNull { it.slot == tb.slot }

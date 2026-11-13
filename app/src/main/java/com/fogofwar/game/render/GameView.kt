@@ -805,6 +805,12 @@ class GameView @JvmOverloads constructor(
             val total = System.nanoTime() - drawStart
             perf.sections[4] = total / 1_000_000f
             perf.frame(total)
+            val stats = net.clientStats()
+            val snapshotLine = if (stats == null) {
+                "snap: host"
+            } else {
+                "snap ${stats.lastGapMs}/${stats.maxGapMs} ms · starve ${stats.starvedPercent}% · buf ${stats.buffered}"
+            }
             perf.draw(
                 canvas,
                 safeLeft + 12f * density,
@@ -817,6 +823,7 @@ class GameView @JvmOverloads constructor(
                     hardwareCanvas -> "hw"
                     else -> "sw"
                 },
+                snapshotLine,
             )
         }
     }

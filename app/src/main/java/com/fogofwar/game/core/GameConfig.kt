@@ -96,7 +96,7 @@ object GameConfig {
     const val FLAG_LIGHT = 32
 
     /** Client renders this far in the past to interpolate between snapshots. */
-    const val INTERPOLATION_DELAY_MS = 80L
+    const val INTERPOLATION_DELAY_MS = 120L
     const val SNAPSHOT_HZ = TICK_HZ / 2
     const val INPUT_SEND_HZ = 20
 

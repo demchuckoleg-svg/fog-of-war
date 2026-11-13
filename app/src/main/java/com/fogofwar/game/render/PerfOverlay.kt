@@ -44,9 +44,10 @@ class PerfOverlay {
         color = 0xFFB8F5D0.toInt()
     }
     private val background = Paint().apply { color = 0xB0000000.toInt() }
-    private var lines = arrayOf("", "", "", "")
+    private var lines = arrayOf("", "", "", "", "")
     private var blockWidth = 0f
     private var renderer = "sw"
+    private var snapshotLine = ""
 
     fun frame(nanos: Long) {
         frameNanos[frameIndex] = nanos
@@ -62,8 +63,10 @@ class PerfOverlay {
         sentBytes: Long,
         receivedBytes: Long,
         renderer: String,
+        snapshotLine: String,
     ) {
         this.renderer = renderer
+        this.snapshotLine = snapshotLine
         val now = SystemClock.elapsedRealtime()
         if (now - lastStatsAt >= 500L) {
             lastStatsAt = now
@@ -107,6 +110,7 @@ class PerfOverlay {
             receivedPerSecond / 1024.0,
             renderer,
         )
+        lines[4] = snapshotLine
         var width = 0f
         for (line in lines) width = maxOf(width, paint.measureText(line))
         blockWidth = width

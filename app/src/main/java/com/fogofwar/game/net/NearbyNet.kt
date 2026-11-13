@@ -341,6 +341,9 @@ class NearbyNet(context: Context) {
         return out
     }
 
+    /** Snapshot jitter/starvation counters for the perf overlay (client side only). */
+    fun clientStats(): ClientNetStats? = clientRound?.stats()
+
     fun startRound() {
         if (!isHost || (roomState != RoomState.HOSTING && roomState != RoomState.LOBBY)) return
         val players = ArrayList(humans.values.sortedBy { it.slot })
