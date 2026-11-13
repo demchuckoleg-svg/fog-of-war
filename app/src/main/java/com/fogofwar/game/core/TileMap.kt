@@ -36,6 +36,9 @@ class TileMap(
     /** Tile coordinates of spawn points (up to MAX_PLAYERS). */
     val spawns: MutableList<IntArray> = ArrayList()
 
+    /** Team-mode spawns: three for team A, then three for team B. */
+    val teamSpawns: MutableList<IntArray> = ArrayList()
+
     fun index(tx: Int, ty: Int): Int = ty * width + tx
 
     fun inBounds(tx: Int, ty: Int): Boolean = tx in 0 until width && ty in 0 until height

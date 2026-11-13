@@ -10,7 +10,7 @@ class GameWorldTest {
 
     @Test
     fun mapsAreDeterministic() {
-        for (id in 0..3) {
+        for (id in MapGenerator.MAP_NAMES.indices) {
             val a = MapGenerator.generate(id, 987654321L)
             val b = MapGenerator.generate(id, 987654321L)
             assertArrayEquals("map $id differs between generations", a.tiles, b.tiles)
@@ -27,7 +27,7 @@ class GameWorldTest {
 
     @Test
     fun mapsHaveEnoughCoverAndWater() {
-        for (id in 0..3) {
+        for (id in MapGenerator.MAP_NAMES.indices) {
             val map = MapGenerator.generate(id, 33L)
             val bricks = map.tiles.count { it.toInt() == Tile.BRICK.ordinal }
             val steel = map.tiles.count { it.toInt() == Tile.STEEL.ordinal }
@@ -41,9 +41,9 @@ class GameWorldTest {
 
     @Test
     fun everySpawnIsClearOnEveryMap() {
-        for (id in 0..3) {
+        for (id in MapGenerator.MAP_NAMES.indices) {
             val map = MapGenerator.generate(id, 42L)
-            for (spawn in map.spawns) {
+            for (spawn in map.spawns + map.teamSpawns) {
                 val x = (spawn[0] + 0.5f) * GameConfig.TILE
                 val y = (spawn[1] + 0.5f) * GameConfig.TILE
                 assertTrue(
@@ -347,6 +347,23 @@ class GameWorldTest {
         assertEquals(GameConfig.MAX_HP, victim.hp)
         assertEquals(spawnX, victim.x, 0.01f)
         assertEquals(spawnY, victim.y, 0.01f)
+    }
+
+    @Test
+    fun teamModeSpawnsAlliesTogether() {
+        val world = GameWorld(
+            MapGenerator.generate(0, 8L),
+            0,
+            8L,
+            RoundRules(teams = true),
+        )
+        val allyA = world.addPlayer(0, "A", team = 0)
+        val allyB = world.addPlayer(2, "B", team = 0)
+        val enemy = world.addPlayer(1, "C", team = 1)
+
+        val allyDistance = hypot(allyA.x - allyB.x, allyA.y - allyB.y)
+        val enemyDistance = hypot(allyA.x - enemy.x, allyA.y - enemy.y)
+        assertTrue("allies should start closer than the enemy", allyDistance < enemyDistance)
     }
 
     @Test

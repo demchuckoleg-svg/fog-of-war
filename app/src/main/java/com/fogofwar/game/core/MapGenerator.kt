@@ -14,6 +14,8 @@ object MapGenerator {
         "Стальная Крепость",
         "Мосты",
         "Арена Колонн",
+        "Туманное Болото",
+        "Кольцевой Разлом",
     )
 
     val MAP_DESCRIPTIONS = listOf(
@@ -21,6 +23,8 @@ object MapGenerator {
         "Стальные кольца, открытый центр",
         "Реки, острова и узкие мосты",
         "Симметричные колонны и укрытия",
+        "Водные топи, островки и тростник",
+        "Диагональные стены и узкие проходы",
     )
 
     private val SPAWN_TILES = listOf(
@@ -31,6 +35,29 @@ object MapGenerator {
         intArrayOf(32, 3),
         intArrayOf(32, 60),
     )
+
+    /**
+     * Team-mode spawns per map: three close positions on the left (A), then three on
+     * the right (B). Slots 0/2/4 and 1/3/5 use them, so each team starts together.
+     */
+    private val TEAM_SPAWNS: List<List<IntArray>> = listOf(
+        teamLayout(9, 54, 26, 32, 38),
+        teamLayout(8, 55, 26, 32, 38),
+        teamLayout(10, 53, 24, 28, 38),
+        teamLayout(9, 54, 24, 32, 40),
+        teamLayout(10, 53, 24, 32, 40),
+        teamLayout(9, 54, 24, 32, 40),
+    )
+
+    private fun teamLayout(leftX: Int, rightX: Int, y0: Int, y1: Int, y2: Int): List<IntArray> =
+        listOf(
+            intArrayOf(leftX, y0),
+            intArrayOf(leftX, y1),
+            intArrayOf(leftX, y2),
+            intArrayOf(rightX, y0),
+            intArrayOf(rightX, y1),
+            intArrayOf(rightX, y2),
+        )
 
     fun generate(mapId: Int, seed: Long): TileMap {
         val map = TileMap()
@@ -47,7 +74,9 @@ object MapGenerator {
             0 -> generateRuins(map, rng)
             1 -> generateFortress(map, rng)
             2 -> generateBridges(map, rng)
-            else -> generatePillars(map, rng)
+            3 -> generatePillars(map, rng)
+            4 -> generateSwamp(map, rng)
+            else -> generateRift(map, rng)
         }
 
         // Arena in the middle, always open.
@@ -59,6 +88,12 @@ object MapGenerator {
         }
         // Connect every spawn to the centre with a narrow corridor.
         for (spawn in SPAWN_TILES) carveCorridor(map, spawn[0], spawn[1], 32, 32)
+
+        for (spawn in TEAM_SPAWNS[id]) {
+            map.teamSpawns.add(spawn.copyOf())
+            clearSpawn(map, spawn[0], spawn[1])
+            carveCorridor(map, spawn[0], spawn[1], 32, 32)
+        }
         return map
     }
 
@@ -171,6 +206,46 @@ object MapGenerator {
                 map.set(i, 32, Tile.STEEL)
                 map.set(32, i, Tile.STEEL)
             }
+        }
+    }
+
+    private fun generateSwamp(map: TileMap, rng: Rng) {
+        repeat(9) {
+            val x = rng.nextInt(6, map.width - 7)
+            val y = rng.nextInt(6, map.height - 7)
+            val w = rng.nextInt(3, 7)
+            val h = rng.nextInt(3, 7)
+            map.fillRect(x, y, min(x + w, map.width - 2), min(y + h, map.height - 2), Tile.WATER)
+        }
+        repeat(48) {
+            val x = rng.nextInt(3, map.width - 4)
+            val y = rng.nextInt(3, map.height - 4)
+            if (map.tileAt(x, y) != Tile.EMPTY) return@repeat
+            val w = rng.nextInt(2, 5)
+            val h = rng.nextInt(2, 5)
+            for (yy in y until min(y + h, map.height - 1)) {
+                for (xx in x until min(x + w, map.width - 1)) {
+                    if (map.tileAt(xx, yy) == Tile.EMPTY) map.set(xx, yy, Tile.BRICK)
+                }
+            }
+        }
+    }
+
+    private fun generateRift(map: TileMap, rng: Rng) {
+        // Two diagonal steel scars with regular gaps: cover without sealing the map.
+        for (i in 8 until map.width - 8) {
+            if (i % 7 in 0..1) continue
+            map.set(i, i, Tile.STEEL)
+            map.set(map.width - 1 - i, i, Tile.STEEL)
+        }
+        repeat(58) {
+            val x = rng.nextInt(3, map.width - 4)
+            val y = rng.nextInt(3, map.height - 4)
+            if (map.tileAt(x, y) != Tile.EMPTY) return@repeat
+            val w = rng.nextInt(2, 4)
+            val h = rng.nextInt(2, 4)
+            val tile = if (rng.nextFloat() < 0.18f) Tile.STEEL else Tile.BRICK
+            map.fillRect(x, y, min(x + w, map.width - 2), min(y + h, map.height - 2), tile)
         }
     }
 

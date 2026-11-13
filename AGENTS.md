@@ -13,7 +13,7 @@ Multiplayer Android top-down tank game (1–6 players via Google Play Services N
 
 ## Architecture & Modules
 - `core/` — **Pure Kotlin game simulation (NO Android dependencies).**
-  - Deterministic 64×64 map generation by `(mapId, GameConfig.MAP_SEED)` (4 maps, no consecutive repeats).
+  - Deterministic 64×64 map generation by `(mapId, GameConfig.MAP_SEED)` (6 maps, no consecutive repeats).
   - Tiles: `EMPTY`, `BRICK` (2 HP), `CRACKED`, `STEEL`, `WATER`.
   - AABB physics, tank push-apart, bullets, shrinking zone, sonar (~4 s pulse), AI bots (4 in solo), grenades (2 charges, 9 s recharge, thrown ~245 px, 1.15 s fuse, R=92 AoE), pickups (`REPAIR`, `POWER`, `LIGHT`), `EffectEvent` queue.
 - `net/` — **Networking & persistent session state.**

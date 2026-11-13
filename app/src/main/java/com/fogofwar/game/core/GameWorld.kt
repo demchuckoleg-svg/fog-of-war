@@ -74,7 +74,15 @@ class GameWorld(
     }
 
     fun addPlayer(slot: Int, name: String, isBot: Boolean = false, team: Int = 0): Tank {
-        val spawn = map.spawns[slot % map.spawns.size]
+        val teamSpawns = map.teamSpawns
+        val useTeams = rules.teams && teamSpawns.size >= 6
+        val spawns = if (useTeams) teamSpawns else map.spawns
+        val spawn = if (useTeams) {
+            val safeTeam = team.coerceIn(0, 1)
+            spawns[(safeTeam * 3 + slot / 2) % spawns.size]
+        } else {
+            spawns[slot % spawns.size]
+        }
         val x = (spawn[0] + 0.5f) * GameConfig.TILE
         val y = (spawn[1] + 0.5f) * GameConfig.TILE
         val dir = atan2(centerY - y, centerX - x)

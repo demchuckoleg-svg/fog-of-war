@@ -1635,6 +1635,21 @@ class GameView @JvmOverloads constructor(
             strokePaint.color = 0x9957D68B.toInt()
             strokePaint.strokeWidth = 1.5f * density
             canvas.drawCircle(left + size / 2f, top + size / 2f, frame.sonarRadius * scale, strokePaint)
+
+            // Allies answer the sonar pulse as green dots.
+            val meTank = frame.me
+            if (frame.rules.teams && meTank != null) {
+                for (tank in frame.tanks) {
+                    if (!tank.alive || tank.slot == frame.mySlot || tank.team != meTank.team) continue
+                    bulletPaint.color = 0xCC57D68B.toInt()
+                    canvas.drawCircle(
+                        left + tank.x * scale,
+                        top + tank.y * scale,
+                        2.6f * density,
+                        bulletPaint,
+                    )
+                }
+            }
         }
 
         for (blip in blips) {

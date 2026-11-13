@@ -21,6 +21,12 @@ class MapConnectivityTest {
                 "map $mapId: centre is unreachable from spawn ${start[0]},${start[1]}",
                 reachable[map.index(centre, centre)],
             )
+            map.teamSpawns.forEach { spawn ->
+                assertTrue(
+                    "map $mapId: team spawn ${spawn[0]},${spawn[1]} cannot reach the centre",
+                    reachable[map.index(spawn[0], spawn[1])],
+                )
+            }
         }
     }
 
@@ -31,7 +37,7 @@ class MapConnectivityTest {
             val start = map.spawns.first()
             val reachable = floodFill(map, start[0], start[1])
 
-            map.spawns.forEach { spawn ->
+            (map.spawns + map.teamSpawns).forEach { spawn ->
                 assertTrue(
                     "map $mapId: spawn ${spawn[0]},${spawn[1]} is cut off from ${start[0]},${start[1]}",
                     reachable[map.index(spawn[0], spawn[1])],
@@ -45,8 +51,13 @@ class MapConnectivityTest {
         MapGenerator.MAP_NAMES.indices.forEach { mapId ->
             val map = MapGenerator.generate(mapId, GameConfig.MAP_SEED)
             val spawns = map.spawns.map { it.toList() }.toSet()
+            val teamSpawns = map.teamSpawns.map { it.toList() }.toSet()
 
             assertTrue("map $mapId should have 6 distinct spawns", spawns.size == GameConfig.MAX_PLAYERS)
+            assertTrue(
+                "map $mapId should have 6 distinct team spawns",
+                teamSpawns.size == GameConfig.MAX_PLAYERS,
+            )
         }
     }
 
