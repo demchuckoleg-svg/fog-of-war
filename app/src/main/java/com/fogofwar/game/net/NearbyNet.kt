@@ -577,7 +577,8 @@ class NearbyNet(context: Context) {
         if (desiredAdvertisingName() != name) return
         val options = AdvertisingOptions.Builder().setStrategy(Strategy.P2P_STAR).build()
         advertisedName = name
-        client?.startAdvertising(SERVICE_ID, name, connectionCallback, options)
+        // Nearby's signature is (endpointName, serviceId, callback, options).
+        client?.startAdvertising(name, SERVICE_ID, connectionCallback, options)
             ?.addOnFailureListener { e ->
                 advertisedName = null
                 if (roomState == RoomState.IN_GAME || roomState == RoomState.IDLE) return@addOnFailureListener

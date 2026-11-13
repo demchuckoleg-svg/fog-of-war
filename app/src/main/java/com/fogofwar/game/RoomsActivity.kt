@@ -223,7 +223,7 @@ class RoomsActivity : AppCompatActivity(), NearbyNet.Listener {
         } catch (_: SecurityException) {
             return getString(R.string.status_bad_permissions)
         }
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2) {
             val location = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
             val enabled = try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
