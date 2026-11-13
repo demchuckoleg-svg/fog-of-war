@@ -16,6 +16,7 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.util.AttributeSet
 import android.util.Log
+import android.util.LruCache
 import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -66,7 +67,6 @@ class GameView @JvmOverloads constructor(
 
     private val lightPath = Path()
     private val enemyPath = Path()
-    private val fogPath = Path()
     private val selfHole = Path()
     private val visibleNow = BooleanArray(GameConfig.MAX_PLAYERS)
     private val glintX = FloatArray(GameConfig.LIGHT_RAYS)
@@ -147,6 +147,12 @@ class GameView @JvmOverloads constructor(
     private var minimapMap: TileMap? = null
     private var minimapTick = -1000L
     private var minimapPixels: IntArray? = null
+
+    private class WorldChunk(val bitmap: Bitmap, val hash: Long)
+
+    /** 8x8-tile cached terrain; ~6 MB at the 24-chunk cap. */
+    private val chunkCache = LruCache<Long, WorldChunk>(24)
+
     private val minimapPaint = Paint().apply {
         isFilterBitmap = false
         isAntiAlias = false
@@ -198,12 +204,24 @@ class GameView @JvmOverloads constructor(
     private var shakeDX = 0f
     private var shakeDY = 0f
 
+    private var lightCacheValid = false
+    private var lightCacheMap: TileMap? = null
+    private var lightCacheX = 0f
+    private var lightCacheY = 0f
+    private var lightCacheDir = 0f
+    private var lightCacheBoost = false
+    private var lightCacheRevision = -1L
+
     private val perf = PerfOverlay()
     @Volatile private var minimapLeft = 0f
     @Volatile private var minimapTop = 0f
     @Volatile private var minimapSize = 0f
     private var perfTapCount = 0
     private var perfTapAt = 0L
+    /** 0 = overlay off, 1 = overlay + software canvas, 2 = overlay + hardware canvas. */
+    private var perfMode = 0
+    @Volatile private var hardwareCanvas = false
+    @Volatile private var hardwareFallback = false
     private var renderRestarts = 0
     private var lastRestartAt = 0L
     private var renderErrorUntil = 0L
@@ -217,7 +235,13 @@ class GameView @JvmOverloads constructor(
         holder.addCallback(this)
         isFocusable = true
         keepScreenOn = true
-        perf.enabled = prefs.getBoolean("perf_overlay", false)
+        perfMode = when {
+            !prefs.getBoolean("perf_overlay", false) -> 0
+            prefs.getBoolean("hw_canvas", false) -> 2
+            else -> 1
+        }
+        perf.enabled = perfMode > 0
+        hardwareCanvas = perfMode == 2
         SpriteAtlas.warmUp(context)
     }
 
@@ -345,7 +369,7 @@ class GameView @JvmOverloads constructor(
                     updateBlips(frame)
                     lastFrame = frame
                 }
-                val canvas = holder.lockCanvas()
+                val canvas = lockRenderCanvas()
                 if (canvas == null) {
                     SystemClock.sleep(4)
                     continue
@@ -424,13 +448,20 @@ class GameView @JvmOverloads constructor(
             perfTapCount++
             if (perfTapCount >= 5) {
                 perfTapCount = 0
-                perf.enabled = !perf.enabled
-                prefs.edit().putBoolean("perf_overlay", perf.enabled).apply()
-                Toast.makeText(
-                    context,
-                    if (perf.enabled) "Оверлей производительности включён" else "Оверлей выключен",
-                    Toast.LENGTH_SHORT,
-                ).show()
+                perfMode = (perfMode + 1) % 3
+                perf.enabled = perfMode > 0
+                hardwareCanvas = perfMode == 2
+                hardwareFallback = false
+                prefs.edit()
+                    .putBoolean("perf_overlay", perf.enabled)
+                    .putBoolean("hw_canvas", hardwareCanvas)
+                    .apply()
+                val message = when (perfMode) {
+                    1 -> "Оверлей: software-канвас"
+                    2 -> "Оверлей: hardware-канвас"
+                    else -> "Оверлей выключен"
+                }
+                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
             }
             return
         }
@@ -749,6 +780,11 @@ class GameView @JvmOverloads constructor(
                 10f * scaledDensity,
                 net.bytesSent.get(),
                 net.bytesReceived.get(),
+                when {
+                    hardwareFallback -> "sw*"
+                    hardwareCanvas -> "hw"
+                    else -> "sw"
+                },
             )
         }
     }
@@ -764,6 +800,19 @@ class GameView @JvmOverloads constructor(
         val power = shakePower * fade
         shakeDX = sin(now * 0.09f) * power
         shakeDY = cos(now * 0.13f) * power
+    }
+
+    /** Hardware canvas when the debug mode asks for it; software is the safe fallback. */
+    private fun lockRenderCanvas(): Canvas? {
+        if (hardwareCanvas && !hardwareFallback) {
+            try {
+                holder.lockHardwareCanvas()?.let { return it }
+            } catch (t: Throwable) {
+                hardwareFallback = true
+                Log.w("GameView", "hardware canvas unavailable, falling back to software", t)
+            }
+        }
+        return holder.lockCanvas()
     }
 
     private fun addShake(power: Float, durationMs: Long) {
@@ -786,40 +835,102 @@ class GameView @JvmOverloads constructor(
         val tx1 = floor(right / GameConfig.TILE).toInt().coerceIn(0, map.width - 1)
         val ty1 = floor(bottom / GameConfig.TILE).toInt().coerceIn(0, map.height - 1)
 
+        // Static terrain is cached in 8x8-tile chunks; only changed chunks are rebuilt.
+        for (cy in ty0 / CHUNK_TILES..ty1 / CHUNK_TILES) {
+            for (cx in tx0 / CHUNK_TILES..tx1 / CHUNK_TILES) {
+                drawChunk(canvas, map, cx, cy)
+            }
+        }
+
+        // Water is animated, so it stays out of the chunk cache and is drawn on top.
         for (ty in ty0..ty1) {
             for (tx in tx0..tx1) {
-                val tile = map.tileAt(tx, ty)
+                if (map.tileAt(tx, ty) != Tile.WATER) continue
                 val x = tx * GameConfig.TILE
                 val y = ty * GameConfig.TILE
                 spriteRect.set(x, y, x + GameConfig.TILE, y + GameConfig.TILE)
-                when (tile) {
-                    Tile.EMPTY -> {
-                        // Sparse detail: the base ground rect already covers the surface.
-                        val hash = tx * 31 + ty * 17
-                        if ((hash and 1) == 0) {
-                            val variant = (hash ushr 1) and 3
-                            canvas.drawBitmap(SpriteAtlas.ground(variant), null, spriteRect, spritePaint)
-                        }
-                    }
-                    Tile.WATER -> {
-                        val frameIndex = ((now / 420L) + tx + ty).toInt() and 1
-                        canvas.drawBitmap(SpriteAtlas.wall(Tile.WATER, frameIndex), null, spriteRect, spritePaint)
-                    }
-                    Tile.BRICK -> {
-                        canvas.drawRect(x + 3f, y + 3f, x + GameConfig.TILE + 3f, y + GameConfig.TILE + 3f, shadowPaint)
-                        canvas.drawBitmap(SpriteAtlas.wall(Tile.BRICK, (tx + ty) and 1), null, spriteRect, spritePaint)
-                    }
-                    Tile.CRACKED -> {
-                        canvas.drawRect(x + 3f, y + 3f, x + GameConfig.TILE + 3f, y + GameConfig.TILE + 3f, shadowPaint)
-                        canvas.drawBitmap(SpriteAtlas.wall(Tile.CRACKED, 0), null, spriteRect, spritePaint)
-                    }
-                    Tile.STEEL -> {
-                        canvas.drawRect(x + 3f, y + 3f, x + GameConfig.TILE + 3f, y + GameConfig.TILE + 3f, shadowPaint)
-                        canvas.drawBitmap(SpriteAtlas.wall(Tile.STEEL, 0), null, spriteRect, spritePaint)
-                    }
-                }
+                val frameIndex = ((now / 420L) + tx + ty).toInt() and 1
+                canvas.drawBitmap(SpriteAtlas.wall(Tile.WATER, frameIndex), null, spriteRect, spritePaint)
             }
         }
+    }
+
+    private fun drawChunk(canvas: Canvas, map: TileMap, cx: Int, cy: Int) {
+        val key = (cx.toLong() shl 32) or (cy.toLong() and 0xFFFF_FFFFL)
+        val hash = chunkHash(map, cx, cy)
+        var chunk = chunkCache.get(key)
+        if (chunk == null || chunk.hash != hash) {
+            val bitmap = Bitmap.createBitmap(CHUNK_PX, CHUNK_PX, Bitmap.Config.ARGB_8888)
+            val chunkCanvas = Canvas(bitmap)
+            val left = cx * CHUNK_TILES
+            val top = cy * CHUNK_TILES
+            val right = minOf(map.width - 1, left + CHUNK_TILES - 1)
+            val bottom = minOf(map.height - 1, top + CHUNK_TILES - 1)
+            for (ty in top..bottom) {
+                for (tx in left..right) {
+                    drawStaticTile(chunkCanvas, map, tx, ty, left, top)
+                }
+            }
+            chunk = WorldChunk(bitmap, hash)
+            chunkCache.put(key, chunk)
+        }
+        val worldX = cx * CHUNK_PX.toFloat()
+        val worldY = cy * CHUNK_PX.toFloat()
+        spriteRect.set(worldX, worldY, worldX + CHUNK_PX, worldY + CHUNK_PX)
+        canvas.drawBitmap(chunk.bitmap, null, spriteRect, spritePaint)
+    }
+
+    private fun drawStaticTile(
+        canvas: Canvas,
+        map: TileMap,
+        tx: Int,
+        ty: Int,
+        originTx: Int,
+        originTy: Int,
+    ) {
+        val tile = map.tileAt(tx, ty)
+        if (tile == Tile.WATER) return
+        val x = (tx - originTx) * GameConfig.TILE
+        val y = (ty - originTy) * GameConfig.TILE
+        spriteRect.set(x, y, x + GameConfig.TILE, y + GameConfig.TILE)
+        when (tile) {
+            Tile.EMPTY -> {
+                // Sparse detail: the base ground rect already covers the surface.
+                val hash = tx * 31 + ty * 17
+                if ((hash and 1) == 0) {
+                    val variant = (hash ushr 1) and 3
+                    canvas.drawBitmap(SpriteAtlas.ground(variant), null, spriteRect, spritePaint)
+                }
+            }
+            Tile.BRICK -> {
+                canvas.drawRect(x + 3f, y + 3f, x + GameConfig.TILE + 3f, y + GameConfig.TILE + 3f, shadowPaint)
+                canvas.drawBitmap(SpriteAtlas.wall(Tile.BRICK, (tx + ty) and 1), null, spriteRect, spritePaint)
+            }
+            Tile.CRACKED -> {
+                canvas.drawRect(x + 3f, y + 3f, x + GameConfig.TILE + 3f, y + GameConfig.TILE + 3f, shadowPaint)
+                canvas.drawBitmap(SpriteAtlas.wall(Tile.CRACKED, 0), null, spriteRect, spritePaint)
+            }
+            Tile.STEEL -> {
+                canvas.drawRect(x + 3f, y + 3f, x + GameConfig.TILE + 3f, y + GameConfig.TILE + 3f, shadowPaint)
+                canvas.drawBitmap(SpriteAtlas.wall(Tile.STEEL, 0), null, spriteRect, spritePaint)
+            }
+            Tile.WATER -> Unit
+        }
+    }
+
+    /** FNV-1a over a chunk's tile types; changes rebuild only that chunk. */
+    private fun chunkHash(map: TileMap, cx: Int, cy: Int): Long {
+        val left = cx * CHUNK_TILES
+        val top = cy * CHUNK_TILES
+        val right = minOf(map.width - 1, left + CHUNK_TILES - 1)
+        val bottom = minOf(map.height - 1, top + CHUNK_TILES - 1)
+        var hash = -3750763034362895579L
+        for (ty in top..bottom) {
+            for (tx in left..right) {
+                hash = (hash xor map.tileAt(tx, ty).ordinal.toLong()) * 1099511628211L
+            }
+        }
+        return hash
     }
 
     private fun spawnTreads(frame: GameFrame, now: Long) {
@@ -966,33 +1077,51 @@ class GameView @JvmOverloads constructor(
         val right = camera.worldRight + margin
         val bottom = camera.worldBottom + margin
 
-        fogPath.reset()
-        fogPath.addRect(left, top, right, bottom, Path.Direction.CW)
+        if (me != null && me.alive) {
+            if (me.lightsOn) {
+                if (!lightCacheValid ||
+                    lightCacheMap !== frame.map ||
+                    lightCacheX != me.x ||
+                    lightCacheY != me.y ||
+                    lightCacheDir != me.turretDir ||
+                    lightCacheBoost != me.lightBoost ||
+                    lightCacheRevision != frame.map.revision
+                ) {
+                    buildOwnLight(frame, me)
+                    lightCacheValid = true
+                    lightCacheMap = frame.map
+                    lightCacheX = me.x
+                    lightCacheY = me.y
+                    lightCacheDir = me.turretDir
+                    lightCacheBoost = me.lightBoost
+                    lightCacheRevision = frame.map.revision
+                }
+                val range = ownLightRange(me)
+                // Glow is drawn under the fog: the clip hole reveals it, everything else is covered.
+                glowPaint.shader = if (me.lightBoost) coneGlowBoost else coneGlow
+                canvas.save()
+                canvas.translate(me.x, me.y)
+                canvas.drawCircle(0f, 0f, range, glowPaint)
+                canvas.restore()
+                glowPaint.shader = null
+            }
+        }
 
+        canvas.save()
         if (me != null) {
             if (me.alive) {
-                if (me.lightsOn) {
-                    buildOwnLight(frame, me)
-                    val range = ownLightRange(me)
-                    // Glow is drawn under the fog: the cone hole reveals it, everything else is covered.
-                    glowPaint.shader = if (me.lightBoost) coneGlowBoost else coneGlow
-                    canvas.save()
-                    canvas.translate(me.x, me.y)
-                    canvas.drawCircle(0f, 0f, range, glowPaint)
-                    canvas.restore()
-                    glowPaint.shader = null
-                    fogPath.op(lightPath, Path.Op.DIFFERENCE)
-                }
+                if (me.lightsOn) canvas.clipOutPath(lightPath)
                 selfHole.reset()
                 selfHole.addCircle(me.x, me.y, GameConfig.LIGHT_SELF_RADIUS, Path.Direction.CW)
-                fogPath.op(selfHole, Path.Op.DIFFERENCE)
+                canvas.clipOutPath(selfHole)
             } else {
                 selfHole.reset()
                 selfHole.addCircle(me.x, me.y, 190f, Path.Direction.CW)
-                fogPath.op(selfHole, Path.Op.DIFFERENCE)
+                canvas.clipOutPath(selfHole)
             }
         }
-        canvas.drawPath(fogPath, fogPaint)
+        canvas.drawRect(left, top, right, bottom, fogPaint)
+        canvas.restore()
 
         if (me != null && me.alive) {
             glowPaint.shader = haloGlow
@@ -1500,6 +1629,8 @@ class GameView @JvmOverloads constructor(
         private val COLOR_HP = 0xFFFF5252.toInt()
         private const val GHOST_MS = 4000L
         private const val REVEAL_MS = 2_200L
+        private const val CHUNK_TILES = 8
+        private const val CHUNK_PX = CHUNK_TILES * 32
         private val COLOR_FOG = 0xF8090C10.toInt()
         private val PLAYER_COLORS = intArrayOf(
             0xFF57D68B.toInt(),

@@ -29,6 +29,10 @@ class TileMap(
 ) {
     val tiles: ByteArray = ByteArray(width * height)
 
+    /** Increments on every tile mutation; render caches use it to invalidate. */
+    var revision: Long = 0L
+        private set
+
     /** Tile coordinates of spawn points (up to MAX_PLAYERS). */
     val spawns: MutableList<IntArray> = ArrayList()
 
@@ -43,7 +47,14 @@ class TileMap(
         tileAt(floor(x / GameConfig.TILE).toInt(), floor(y / GameConfig.TILE).toInt())
 
     fun set(tx: Int, ty: Int, tile: Tile) {
-        if (inBounds(tx, ty)) tiles[index(tx, ty)] = tile.ordinal.toByte()
+        if (inBounds(tx, ty)) {
+            val idx = index(tx, ty)
+            val value = tile.ordinal.toByte()
+            if (tiles[idx] != value) {
+                tiles[idx] = value
+                revision++
+            }
+        }
     }
 
     fun setWorld(x: Float, y: Float, tile: Tile) {
@@ -140,10 +151,12 @@ class TileMap(
         return when (tileAt(tx, ty)) {
             Tile.BRICK -> {
                 tiles[idx] = Tile.CRACKED.ordinal.toByte()
+                revision++
                 TileChange(idx, Tile.CRACKED)
             }
             Tile.CRACKED -> {
                 tiles[idx] = Tile.EMPTY.ordinal.toByte()
+                revision++
                 TileChange(idx, Tile.EMPTY)
             }
             else -> null
@@ -157,6 +170,7 @@ class TileMap(
             Tile.BRICK, Tile.CRACKED -> {
                 val idx = index(tx, ty)
                 tiles[idx] = Tile.EMPTY.ordinal.toByte()
+                revision++
                 TileChange(idx, Tile.EMPTY)
             }
             else -> null
@@ -164,7 +178,13 @@ class TileMap(
     }
 
     fun applyChange(change: TileChange) {
-        if (change.index in tiles.indices) tiles[change.index] = change.tile.ordinal.toByte()
+        if (change.index in tiles.indices) {
+            val value = change.tile.ordinal.toByte()
+            if (tiles[change.index] != value) {
+                tiles[change.index] = value
+                revision++
+            }
+        }
     }
 
     /** True if an axis-aligned box (half extents) does not intersect any solid tile. */

@@ -46,6 +46,7 @@ class PerfOverlay {
     private val background = Paint().apply { color = 0xB0000000.toInt() }
     private var lines = arrayOf("", "", "", "")
     private var blockWidth = 0f
+    private var renderer = "sw"
 
     fun frame(nanos: Long) {
         frameNanos[frameIndex] = nanos
@@ -60,7 +61,9 @@ class PerfOverlay {
         textSize: Float,
         sentBytes: Long,
         receivedBytes: Long,
+        renderer: String,
     ) {
+        this.renderer = renderer
         val now = SystemClock.elapsedRealtime()
         if (now - lastStatsAt >= 500L) {
             lastStatsAt = now
@@ -98,10 +101,11 @@ class PerfOverlay {
         lines[2] = String.format(Locale.US, "hud %.1f  total %.1f ms", sections[3], sections[4])
         lines[3] = String.format(
             Locale.US,
-            "gc %.1f/s  net %.1f/%.1f KB/s",
+            "gc %.1f/s  net %.1f/%.1f KB/s  %s",
             gcPerSecond,
             sentPerSecond / 1024.0,
             receivedPerSecond / 1024.0,
+            renderer,
         )
         var width = 0f
         for (line in lines) width = maxOf(width, paint.measureText(line))
