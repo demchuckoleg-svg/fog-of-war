@@ -1,6 +1,8 @@
 package com.fogofwar.game.net
 
 import android.content.Context
+import android.net.wifi.WifiManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -69,6 +71,41 @@ class NearbyNet(context: Context) {
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val prefs = context.applicationContext.getSharedPreferences("fogofwar", Context.MODE_PRIVATE)
+
+    /**
+     * Nearby uses Wi-Fi Direct/hotspot for the low-latency path. A high-performance
+     * lock keeps the Wi-Fi radio out of power save during a round.
+     */
+    private val wifiLock: WifiManager.WifiLock? = try {
+        val manager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            manager?.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "fogofwar:nearby")
+        } else {
+            @Suppress("DEPRECATION")
+            manager?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "fogofwar:nearby")
+        }
+    } catch (t: Throwable) {
+        Log.w(TAG, "wifi lock unavailable", t)
+        null
+    }
+
+    private fun acquireWifiLock() {
+        val lock = wifiLock ?: return
+        try {
+            if (!lock.isHeld) lock.acquire()
+        } catch (t: Throwable) {
+            Log.w(TAG, "could not acquire wifi lock", t)
+        }
+    }
+
+    private fun releaseWifiLock() {
+        val lock = wifiLock ?: return
+        try {
+            if (lock.isHeld) lock.release()
+        } catch (t: Throwable) {
+            Log.w(TAG, "could not release wifi lock", t)
+        }
+    }
 
     /** Lifetime local profile; each device records its own rounds. */
     val lifetimeGames: Int get() = prefs.getInt("stats_games", 0)
@@ -364,6 +401,7 @@ class NearbyNet(context: Context) {
         mapId = roundMapId
         val seed = GameConfig.MAP_SEED
         roomState = RoomState.IN_GAME
+        acquireWifiLock()
         lastWinner = null
         status = null
         effectQueue.clear()
@@ -474,6 +512,7 @@ class NearbyNet(context: Context) {
         mainHandler.post {
             if (!isHost || hostRound !== round) return@post
             hostRound = null
+            releaseWifiLock()
             client?.stopAdvertising()
             advertisedName = null
             val winnerTeam = round.world.winnerTeam
@@ -653,6 +692,7 @@ class NearbyNet(context: Context) {
     private fun resetToIdle(notify: Boolean = true) {
         sessionGeneration++
         connectToken++
+        releaseWifiLock()
         cancelDiscoveryRetry()
         cancelAdvertisingUpdate()
         cancelSnapshotWatchdog()
@@ -965,6 +1005,7 @@ class NearbyNet(context: Context) {
                         }
                         roomState == RoomState.IN_GAME -> {
                             roomState = RoomState.LOBBY
+                            releaseWifiLock()
                             clientRound = null
                             myReady = false
                             listener?.onRoundEnded(lastWinner)
@@ -1085,6 +1126,7 @@ class NearbyNet(context: Context) {
         clientRound = ClientRound(map, message.mapId, mySlot, message.players, rules)
         message.players.forEach { humans[it.slot] = it }
         roomState = RoomState.IN_GAME
+        acquireWifiLock()
         lastWinner = null
         status = null
         recordRoundStarted()

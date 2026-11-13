@@ -809,7 +809,8 @@ class GameView @JvmOverloads constructor(
             val snapshotLine = if (stats == null) {
                 "snap: host"
             } else {
-                "snap ${stats.lastGapMs}/${stats.maxGapMs} ms · starve ${stats.starvedPercent}% · buf ${stats.buffered}"
+                "snap ${stats.lastGapMs}/${stats.maxGapMs} ms (${stats.recentMaxGapMs}) " +
+                    "d${stats.delayMs} · starve ${stats.starvedPercent}% · buf ${stats.buffered}"
             }
             perf.draw(
                 canvas,
@@ -1528,6 +1529,17 @@ class GameView @JvmOverloads constructor(
                 safeTop + 182f * density,
                 14f,
                 0xCCFFB0A0.toInt(),
+            )
+        }
+
+        val netStats = net.clientStats()
+        if (netStats != null && netStats.recentMaxGapMs > 250L) {
+            drawCenteredText(
+                canvas,
+                "НЕСТАБИЛЬНАЯ СВЯЗЬ",
+                safeTop + 206f * density,
+                13f,
+                0xCCFFB050.toInt(),
             )
         }
 

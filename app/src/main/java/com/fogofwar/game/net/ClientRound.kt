@@ -10,6 +10,8 @@ import com.fogofwar.game.core.lerpAngle
 data class ClientNetStats(
     val lastGapMs: Long,
     val maxGapMs: Long,
+    val recentMaxGapMs: Long,
+    val delayMs: Int,
     val starvedPercent: Int,
     val buffered: Int,
 )
@@ -40,6 +42,8 @@ class ClientRound(
     private var snapshotsReceived = 0
     private var lastGapMs = 0L
     private var maxGapMs = 0L
+    private var recentMaxGapMs = 0L
+    private var currentDelayMs = GameConfig.INTERPOLATION_DELAY_MS.toInt()
     private var starvedFrames = 0
     private var totalFrames = 0
 
@@ -72,6 +76,7 @@ class ClientRound(
             if (gap in 0L..5_000L) {
                 lastGapMs = gap
                 if (gap > maxGapMs) maxGapMs = gap
+                recentMaxGapMs = maxOf(gap, (recentMaxGapMs * 0.96).toLong())
             }
         }
         snapshotsReceived++
@@ -90,6 +95,8 @@ class ClientRound(
     fun stats(): ClientNetStats = ClientNetStats(
         lastGapMs = lastGapMs,
         maxGapMs = maxGapMs,
+        recentMaxGapMs = recentMaxGapMs,
+        delayMs = currentDelayMs,
         starvedPercent = if (totalFrames > 0) starvedFrames * 100 / totalFrames else 0,
         buffered = bufferSize,
     )
@@ -132,7 +139,8 @@ class ClientRound(
 
         val newestTick = scratch[count - 1].snapshot.tick
         val oldestTick = scratch[0].snapshot.tick
-        val delayTicks = GameConfig.INTERPOLATION_DELAY_MS * GameConfig.TICK_HZ / 1000.0
+        currentDelayMs = (recentMaxGapMs * 0.8 + 70.0).toInt().coerceIn(100, 180)
+        val delayTicks = currentDelayMs * GameConfig.TICK_HZ / 1000.0
         if (renderTick.isNaN()) {
             renderTick = newestTick - delayTicks
         } else {
