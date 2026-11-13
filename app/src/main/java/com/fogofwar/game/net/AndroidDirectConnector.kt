@@ -133,8 +133,10 @@ class AndroidDirectConnector(context: Context) : DirectConnector {
     }
 
     private companion object {
-        const val MAX_UNBOUND_CANDIDATES = 3
+        // Phones have at most two useful Wi-Fi networks (STA + Wi-Fi Direct); keep the dial
+        // burst small so a failing attempt does not cost CPU or radio time.
+        const val MAX_UNBOUND_CANDIDATES = 2
         const val MAX_PER_NETWORK = 2
-        const val MAX_ATTEMPTS = 10
+        const val MAX_ATTEMPTS = 8
     }
 }
