@@ -1,5 +1,9 @@
 package com.fogofwar.game
 
+import android.bluetooth.BluetoothManager
+import android.content.Context
+import android.location.LocationManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -21,6 +25,7 @@ import com.fogofwar.game.databinding.ItemRoomBinding
 import com.fogofwar.game.net.HostInfo
 import com.fogofwar.game.net.LobbyUiState
 import com.fogofwar.game.net.NearbyNet
+import com.fogofwar.game.net.Protocol
 import com.fogofwar.game.net.RoomState
 
 /**
@@ -74,7 +79,14 @@ class RoomsActivity : AppCompatActivity(), NearbyNet.Listener {
             finish()
             return
         }
-        if (net.roomState == RoomState.IDLE) net.startDiscovery()
+        if (net.roomState == RoomState.IDLE) {
+            net.startDiscovery()
+        } else if (net.roomState == RoomState.DISCOVERING &&
+            net.lobbySnapshot().hosts.isEmpty()
+        ) {
+            // A stale discovery session can look alive but deliver nothing; rebuild it.
+            net.startDiscovery()
+        }
         render(net.lobbySnapshot())
     }
 
@@ -162,6 +174,7 @@ class RoomsActivity : AppCompatActivity(), NearbyNet.Listener {
         binding.refreshButton.isEnabled = !connecting
         binding.emptyState.visibility =
             if (state.hosts.isEmpty() && !connecting) View.VISIBLE else View.GONE
+        binding.emptyHint.text = getString(R.string.rooms_empty_hint_version, Protocol.VERSION)
         binding.emptyTitle.setText(
             if (state.roomState == RoomState.DISCOVERING) R.string.rooms_empty_searching
             else R.string.rooms_empty_idle
@@ -178,10 +191,16 @@ class RoomsActivity : AppCompatActivity(), NearbyNet.Listener {
 
     private fun updateStatus(state: LobbyUiState) {
         val status = state.status
+        val radioIssue = if (state.roomState == RoomState.DISCOVERING && state.hosts.isEmpty()) {
+            radioIssue()
+        } else {
+            null
+        }
         binding.statusText.text = when {
             state.roomState == RoomState.CONNECTING -> connectingTo
                 ?.let { getString(R.string.rooms_connecting, it) }
                 ?: getString(R.string.status_connecting)
+            radioIssue != null -> radioIssue
             state.roomState == RoomState.DISCOVERING && state.hosts.isEmpty() ->
                 getString(
                     if (searchedLong) R.string.rooms_status_nobody
@@ -192,6 +211,32 @@ class RoomsActivity : AppCompatActivity(), NearbyNet.Listener {
             !status.isNullOrBlank() -> status
             else -> getString(R.string.rooms_status_idle)
         }
+    }
+
+    /** The most common reason Nearby finds nothing: a radio or location service is off. */
+    private fun radioIssue(): String? {
+        try {
+            val manager = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+            if (manager?.adapter?.isEnabled == false) {
+                return getString(R.string.rooms_need_bluetooth)
+            }
+        } catch (_: SecurityException) {
+            return getString(R.string.status_bad_permissions)
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            val location = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            val enabled = try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    location?.isLocationEnabled == true
+                } else {
+                    location?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true
+                }
+            } catch (_: Throwable) {
+                true
+            }
+            if (!enabled) return getString(R.string.rooms_need_location)
+        }
+        return null
     }
 
     private class RoomAdapter(

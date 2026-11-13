@@ -1,6 +1,10 @@
 package com.fogofwar.game
 
 import android.Manifest
+import android.app.Activity
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -44,13 +48,21 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
         val action = pendingAction
         pendingAction = PendingAction.NONE
         if (result.values.all { it }) {
-            when (action) {
-                PendingAction.HOST -> net.hostRoom()
-                PendingAction.DISCOVER -> openRooms()
-                PendingAction.NONE -> Unit
-            }
+            ensureBluetoothOrPerform(action)
         } else {
             Toast.makeText(this, R.string.status_bad_permissions, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private val bluetoothLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val action = pendingAction
+        pendingAction = PendingAction.NONE
+        if (result.resultCode == Activity.RESULT_OK) {
+            perform(action)
+        } else {
+            Toast.makeText(this, R.string.status_bluetooth_required, Toast.LENGTH_LONG).show()
         }
     }
 
@@ -156,14 +168,38 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
         if (missing.isEmpty()) {
-            when (action) {
-                PendingAction.HOST -> net.hostRoom()
-                PendingAction.DISCOVER -> openRooms()
-                PendingAction.NONE -> Unit
-            }
+            ensureBluetoothOrPerform(action)
         } else {
             pendingAction = action
             permissionLauncher.launch(missing.toTypedArray())
+        }
+    }
+
+    private fun ensureBluetoothOrPerform(action: PendingAction) {
+        if (action == PendingAction.NONE) return
+        val adapter = try {
+            (getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
+        } catch (_: SecurityException) {
+            null
+        }
+        if (adapter != null && !adapter.isEnabled) {
+            pendingAction = action
+            try {
+                bluetoothLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
+            } catch (_: Throwable) {
+                pendingAction = PendingAction.NONE
+                Toast.makeText(this, R.string.status_bluetooth_required, Toast.LENGTH_LONG).show()
+            }
+        } else {
+            perform(action)
+        }
+    }
+
+    private fun perform(action: PendingAction) {
+        when (action) {
+            PendingAction.HOST -> net.hostRoom()
+            PendingAction.DISCOVER -> openRooms()
+            PendingAction.NONE -> Unit
         }
     }
 

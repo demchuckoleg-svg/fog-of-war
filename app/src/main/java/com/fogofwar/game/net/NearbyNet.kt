@@ -221,7 +221,6 @@ class NearbyNet(context: Context) {
     /** Nearby discovery sometimes goes quiet; retry a few times while nothing is found. */
     private fun scheduleDiscoveryRetry() {
         cancelDiscoveryRetry()
-        if (discoveryRetries >= 3) return
         val runnable = Runnable {
             if (isHost || roomState != RoomState.DISCOVERING || discovered.isNotEmpty()) return@Runnable
             discoveryRetries++
