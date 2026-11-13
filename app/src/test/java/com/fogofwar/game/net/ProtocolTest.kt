@@ -55,6 +55,21 @@ class ProtocolTest {
     }
 
     @Test
+    fun transportOfferRoundTrip() {
+        val bytes = Protocol.transportOffer(
+            token = 1234567890123L,
+            port = 48660,
+            ips = listOf("192.168.49.1", "192.168.1.42", "not-an-ip"),
+        )
+        val message = Protocol.parse(bytes)
+        assertTrue(message is NetMessage.TransportOffer)
+        val offer = message as NetMessage.TransportOffer
+        assertEquals(1234567890123L, offer.token)
+        assertEquals(48660, offer.port)
+        assertEquals(listOf("192.168.49.1", "192.168.1.42"), offer.ips)
+    }
+
+    @Test
     fun snapshotRoundTrip() {
         val snapshot = Snapshot(
             tick = 123,

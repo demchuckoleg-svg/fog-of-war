@@ -20,6 +20,7 @@ Multiplayer Android top-down tank game (1–6 players via Google Play Services N
   - `NearbyNet`: `Application`-scoped singleton surviving `LOBBY` → `IN_GAME` → `ROUND_OVER` → `LOBBY`.
   - `RoomsActivity`: foreground-only discovery; host advertises `RoomDescriptor` (`nick|mapId|players|L/G|code`, **strictly ≤ 64 bytes UTF-8**) with ~1.5 s debounce.
   - Reliable `TileSync` in 200-tile chunks, `Short` snapshot counters, `Hello`/`Welcome` version check, 8 s client snapshot watchdog (covers the 3 s countdown).
+  - **Direct socket path (protocol v6):** after the Nearby handshake the host advertises its private IPv4 addresses (`TransportOffer`); `ClientSocketLink` races them on every Wi-Fi/Ethernet `Network` (a Wi-Fi Direct network is never the default one, so sockets must be bound) and `HostSocketServer` maps the socket to a slot via a per-endpoint secret token. Game traffic prefers this channel and silently falls back to Nearby payloads on any failure.
 - `render/` — **Camera, Fog of War & procedural pixel-art.**
   - Camera ~14 tiles high; FoW via `clipOutPath` for the headlight cone and self circle + grid DDA raycast (`TileMap.raycastLight`), with cached cone geometry.
   - Headlight cone follows **turret** (`turretDir`), not body; stationary tank with headlight off is invisible to sonar; shooting emits orange sound rings visible to all.

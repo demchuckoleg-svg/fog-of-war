@@ -102,11 +102,17 @@ sealed class NetMessage {
     data class RoomClosed(val reason: String) : NetMessage()
     data class SetReady(val ready: Boolean) : NetMessage()
     data class Kick(val slot: Int, val reason: String) : NetMessage()
+
+    /**
+     * Host addresses for the direct TCP channel. [token] is unique per endpoint and proves
+     * which player slot a socket belongs to; [port] is the host's listening port.
+     */
+    data class TransportOffer(val token: Long, val port: Int, val ips: List<String>) : NetMessage()
 }
 
 /** Binary wire protocol. Bump [VERSION] when the format changes. */
 object Protocol {
-    const val VERSION = 5
+    const val VERSION = 6
 
     private const val MSG_HELLO = 1
     private const val MSG_WELCOME = 2
@@ -120,6 +126,7 @@ object Protocol {
     private const val MSG_TILE_SYNC = 10
     private const val MSG_SET_READY = 11
     private const val MSG_KICK = 12
+    private const val MSG_TRANSPORT = 13
 
     private const val INPUT_FIRE = 1
     private const val INPUT_LIGHTS = 2
@@ -127,6 +134,9 @@ object Protocol {
 
     /** Nicknames are capped well below this; the limit only protects the buffer. */
     private const val MAX_STRING_BYTES = 64
+
+    /** A phone rarely has more than two useful IPv4 addresses; cap protects the buffer. */
+    private const val MAX_TRANSPORT_IPS = 6
 
     // ---------------------------------------------------------------- encoding
 
@@ -332,6 +342,30 @@ object Protocol {
         return finish(b)
     }
 
+    /**
+     * Host addresses for the direct socket. IPv4 only: Wi-Fi Direct and phone hotspots hand
+     * out IPv4, and four bytes per address keep the message tiny.
+     */
+    fun transportOffer(token: Long, port: Int, ips: List<String>): ByteArray {
+        val addresses = ArrayList<ByteArray>(MAX_TRANSPORT_IPS)
+        for (ip in ips) {
+            if (addresses.size >= MAX_TRANSPORT_IPS) break
+            val raw = try {
+                java.net.InetAddress.getByName(ip).address
+            } catch (_: Throwable) {
+                null
+            }
+            if (raw != null && raw.size == 4) addresses.add(raw)
+        }
+        val b = ByteBuffer.allocate(1 + 8 + 2 + 1 + addresses.size * 4)
+        b.put(MSG_TRANSPORT.toByte())
+        b.putLong(token)
+        b.putShort(port.toShort())
+        b.put(addresses.size.toByte())
+        for (raw in addresses) b.put(raw)
+        return finish(b)
+    }
+
     fun roomClosed(reason: String): ByteArray {
         val b = ByteBuffer.allocate(256)
         b.put(MSG_ROOM_CLOSED.toByte())
@@ -411,6 +445,20 @@ object Protocol {
                     slot = b.get().toInt() and 0xFF,
                     reason = readString(b),
                 )
+                MSG_TRANSPORT -> {
+                    val token = b.long
+                    val port = b.short.toInt() and 0xFFFF
+                    val count = b.get().toInt() and 0xFF
+                    require(count <= MAX_TRANSPORT_IPS) { "too many transport addresses" }
+                    val ips = ArrayList<String>(count)
+                    repeat(count) {
+                        val raw = ByteArray(4)
+                        b.get(raw)
+                        val host = java.net.InetAddress.getByAddress(raw).hostAddress ?: ""
+                        if (host.isNotBlank()) ips.add(host)
+                    }
+                    NetMessage.TransportOffer(token, port, ips)
+                }
                 else -> null
             }
         } catch (t: Throwable) {

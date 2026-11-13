@@ -40,6 +40,7 @@ class ClientRound(
     private var renderTick = Double.NaN
     private var lastFrameAtMs = -1L
     private var snapshotsReceived = 0
+    private var lastTick = Long.MIN_VALUE
     private var lastGapMs = 0L
     private var maxGapMs = 0L
     private var recentMaxGapMs = 0L
@@ -70,6 +71,10 @@ class ClientRound(
         private set
 
     fun onSnapshot(snapshot: Snapshot) {
+        // The direct socket and Nearby can overlap for a moment while switching paths;
+        // identical or older ticks must not pollute the interpolation buffer.
+        if (snapshot.tick <= lastTick) return
+        lastTick = snapshot.tick
         val now = System.nanoTime() / 1_000_000L
         if (snapshotsReceived > 0) {
             val gap = now - lastSnapshotAt

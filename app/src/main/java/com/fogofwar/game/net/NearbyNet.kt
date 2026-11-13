@@ -107,6 +107,23 @@ class NearbyNet(context: Context) {
         }
     }
 
+    /**
+     * Direct TCP channel over the same Wi-Fi Direct/LAN link Nearby established. Snapshots
+     * and inputs prefer it because it bypasses Play Services' payload scheduler, which is
+     * the suspected source of the one-second bursts. Nearby stays the fallback.
+     */
+    private val socketServer = HostSocketServer(
+        onFrame = { slot, bytes -> mainHandler.post { handleHostSocketFrame(slot, bytes) } },
+        onSlotChanged = { slot, connected -> mainHandler.post { onSocketSlotChanged(slot, connected) } },
+        slotForToken = { token -> slotForTransportToken(token) },
+    )
+    private val socketLink = ClientSocketLink(
+        connector = AndroidDirectConnector(context.applicationContext),
+        onFrame = { bytes -> mainHandler.post { handleClientSocketFrame(bytes) } },
+    )
+    private val transportTokens = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val transportRandom = java.security.SecureRandom()
+
     /** Lifetime local profile; each device records its own rounds. */
     val lifetimeGames: Int get() = prefs.getInt("stats_games", 0)
     val lifetimeWins: Int get() = prefs.getInt("stats_wins", 0)
@@ -215,6 +232,8 @@ class NearbyNet(context: Context) {
             return
         }
         resetToIdle(notify = false)
+        // A failed bind is fine: the room simply stays on Nearby payloads.
+        socketServer.start()
         isHost = true
         mySlot = 0
         lastRoundMapId = -1
@@ -354,7 +373,9 @@ class NearbyNet(context: Context) {
         slotByEndpoint.remove(endpoint)
         endpointBySlot.remove(slot)
         lastInputSeq.remove(slot)
+        transportTokens.remove(endpoint)
         hostRound?.world?.requestRemove(slot)
+        socketServer.dropSlot(slot)
         broadcastRoster()
         updateAdvertising()
         // Give the kick payload a moment to flush before closing the endpoint.
@@ -380,6 +401,14 @@ class NearbyNet(context: Context) {
 
     /** Snapshot jitter/starvation counters for the perf overlay (client side only). */
     fun clientStats(): ClientNetStats? = clientRound?.stats()
+
+    /** Which path game traffic actually uses, for the perf overlay. */
+    fun linkLabel(): String = if (isHost) {
+        val direct = socketServer.activeSlots
+        if (direct > 0) "socket×$direct" else "nearby"
+    } else {
+        if (socketLink.isConnected) "socket" else "nearby"
+    }
 
     fun startRound() {
         if (!isHost || (roomState != RoomState.HOSTING && roomState != RoomState.LOBBY)) return
@@ -679,6 +708,12 @@ class NearbyNet(context: Context) {
 
     private fun sendRaw(endpointId: String, bytes: ByteArray) {
         bytesSent.addAndGet(bytes.size.toLong())
+        if (isHost) {
+            val slot = slotByEndpoint[endpointId]
+            if (slot != null && socketServer.send(slot, bytes)) return
+        } else if (endpointId == hostEndpoint && socketLink.send(bytes)) {
+            return
+        }
         client?.sendPayload(endpointId, Payload.fromBytes(bytes))
     }
 
@@ -693,6 +728,9 @@ class NearbyNet(context: Context) {
         sessionGeneration++
         connectToken++
         releaseWifiLock()
+        socketServer.stop()
+        socketLink.close()
+        transportTokens.clear()
         cancelDiscoveryRetry()
         cancelAdvertisingUpdate()
         cancelSnapshotWatchdog()
@@ -856,11 +894,13 @@ class NearbyNet(context: Context) {
             earlyHellos.remove(endpointId)
             if (isHost) {
                 val slot = slotByEndpoint.remove(endpointId)
+                transportTokens.remove(endpointId)
                 if (slot != null) {
                     endpointBySlot.remove(slot)
                     humans.remove(slot)
                     lastInputSeq.remove(slot)
                     hostRound?.world?.requestRemove(slot)
+                    socketServer.dropSlot(slot)
                     broadcastRoster()
                     updateAdvertising()
                 }
@@ -1043,6 +1083,9 @@ class NearbyNet(context: Context) {
                     mapId = message.mapId
                     notifyLobby()
                 }
+                is NetMessage.TransportOffer -> {
+                    socketLink.updateOffer(message.token, message.port, message.ips)
+                }
                 is NetMessage.RoomClosed -> {
                     val reason = message.reason
                     resetToIdle(notify = false)
@@ -1057,6 +1100,62 @@ class NearbyNet(context: Context) {
                 else -> Unit
             }
         }
+    }
+
+    // --------------------------------------------------------- direct socket path
+
+    private fun transportTokenFor(endpointId: String): Long =
+        transportTokens.getOrPut(endpointId) { transportRandom.nextLong() }
+
+    /** Called from the socket accept thread; only reads concurrent maps. */
+    private fun slotForTransportToken(token: Long): Int? {
+        for ((endpoint, saved) in transportTokens) {
+            if (saved != token) continue
+            return slotByEndpoint[endpoint] ?: pendingSlots[endpoint]
+        }
+        return null
+    }
+
+    /**
+     * Hands one client the host's socket address. The token is per endpoint, so a socket can
+     * only claim the slot of the client it was handed to.
+     */
+    private fun sendTransportOffer(endpointId: String) {
+        if (!isHost || !socketServer.isRunning) return
+        val ips = HostSocketServer.localIpv4Addresses()
+        if (ips.isEmpty()) return
+        sendRaw(
+            endpointId,
+            Protocol.transportOffer(transportTokenFor(endpointId), socketServer.port, ips),
+        )
+    }
+
+    /** Host received a game message over a client's socket. */
+    private fun handleHostSocketFrame(slot: Int, bytes: ByteArray) {
+        if (!isHost) return
+        val endpoint = endpointBySlot[slot] ?: return
+        bytesReceived.addAndGet(bytes.size.toLong())
+        handleMessage(endpoint, bytes)
+    }
+
+    /** Client received a game message over the host's socket. */
+    private fun handleClientSocketFrame(bytes: ByteArray) {
+        if (isHost) return
+        val host = hostEndpoint ?: return
+        bytesReceived.addAndGet(bytes.size.toLong())
+        handleMessage(host, bytes)
+    }
+
+    /**
+     * A client just switched to its socket. Re-send the lobby state over it so a socket that
+     * came up between messages cannot miss a roster or the start of the round.
+     */
+    private fun onSocketSlotChanged(slot: Int, connected: Boolean) {
+        if (!isHost || !connected) return
+        val endpoint = endpointBySlot[slot] ?: return
+        val state = if (roomState == RoomState.IN_GAME) RoomState.IN_GAME else RoomState.LOBBY
+        sendRaw(endpoint, Protocol.roster(state, mapId, humans.values.sortedBy { it.slot }, rules))
+        if (roomState == RoomState.IN_GAME) hostRound?.let { sendRaw(endpoint, it.startMessage()) }
     }
 
     private fun handleClientHello(endpointId: String, message: NetMessage.Hello) {
@@ -1085,6 +1184,7 @@ class NearbyNet(context: Context) {
         slotByEndpoint[endpointId] = slot
         endpointBySlot[slot] = endpointId
         broadcastRoster()
+        sendTransportOffer(endpointId)
         if (isNew) updateAdvertising()
         // A client that missed StartRound recovers on its next Hello/rename.
         if (roomState == RoomState.IN_GAME) {
@@ -1099,11 +1199,13 @@ class NearbyNet(context: Context) {
         pendingSlots.remove(endpointId)
         earlyHellos.remove(endpointId)
         val slot = slotByEndpoint.remove(endpointId)
+        transportTokens.remove(endpointId)
         if (slot != null) {
             endpointBySlot.remove(slot)
             humans.remove(slot)
             lastInputSeq.remove(slot)
             hostRound?.world?.requestRemove(slot)
+            socketServer.dropSlot(slot)
             broadcastRoster()
             updateAdvertising()
         }

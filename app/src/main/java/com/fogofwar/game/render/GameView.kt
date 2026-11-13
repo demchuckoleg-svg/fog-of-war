@@ -806,11 +806,12 @@ class GameView @JvmOverloads constructor(
             perf.sections[4] = total / 1_000_000f
             perf.frame(total)
             val stats = net.clientStats()
+            val link = net.linkLabel()
             val snapshotLine = if (stats == null) {
-                "snap: host"
+                "snap: host · link $link"
             } else {
                 "snap ${stats.lastGapMs}/${stats.maxGapMs} ms (${stats.recentMaxGapMs}) " +
-                    "d${stats.delayMs} · starve ${stats.starvedPercent}% · buf ${stats.buffered}"
+                    "d${stats.delayMs} · starve ${stats.starvedPercent}% · buf ${stats.buffered} · $link"
             }
             perf.draw(
                 canvas,
