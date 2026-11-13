@@ -15,6 +15,7 @@
     <string name="status_need_nickname">Введите никнейм</string>
     <string name="status_bad_permissions">Нужны разрешения Bluetooth и Nearby для игры по локальной сети</string>
     <string name="status_bluetooth_required">Включите Bluetooth — без него Nearby не находит комнаты</string>
+    <string name="status_wifi_hint">Для стабильной связи включите Wi-Fi: с выключенным Wi-Fi Nearby уходит на медленный Bluetooth</string>
     <string name="status_hosting">Комната создана, ждём игроков…</string>
     <string name="status_searching">Ищем игры рядом…</string>
     <string name="status_connecting">Подключение…</string>
@@ -35,6 +36,7 @@
     <string name="rooms_empty_hint">Хост должен быть в лобби, а не в бою. Включите Bluetooth и Wi-Fi на всех телефонах и установите одинаковую версию APK.</string>
     <string name="rooms_empty_hint_version">Хост должен быть в лобби, а не в бою. Включите Bluetooth и Wi-Fi на всех телефонах. Версия протокола: %1$d — на всех телефонах она должна совпадать.</string>
     <string name="rooms_need_bluetooth">Bluetooth выключен. Включите его, чтобы Nearby находил комнаты.</string>
+    <string name="rooms_need_wifi">Wi-Fi выключен: поиск и бой будут медленнее. Включите Wi-Fi на обоих телефонах.</string>
     <string name="rooms_need_location">Включите геолокацию — на этой версии Android Nearby использует её для поиска.</string>
     <string name="rooms_map">Карта: %1$s</string>
     <string name="rooms_players">%1$d/%2$d игроков</string>

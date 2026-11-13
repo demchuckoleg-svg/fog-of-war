@@ -3,6 +3,7 @@ package com.fogofwar.game
 import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.location.LocationManager
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -222,6 +223,10 @@ class RoomsActivity : AppCompatActivity(), NearbyNet.Listener {
             }
         } catch (_: SecurityException) {
             return getString(R.string.status_bad_permissions)
+        }
+        val wifi = getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        if (wifi != null && !wifi.isWifiEnabled) {
+            return getString(R.string.rooms_need_wifi)
         }
         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2) {
             val location = getSystemService(Context.LOCATION_SERVICE) as? LocationManager

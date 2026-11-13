@@ -191,8 +191,18 @@ class MainActivity : AppCompatActivity(), NearbyNet.Listener {
                 Toast.makeText(this, R.string.status_bluetooth_required, Toast.LENGTH_LONG).show()
             }
         } else {
+            if (wifiDisabled()) {
+                Toast.makeText(this, R.string.status_wifi_hint, Toast.LENGTH_LONG).show()
+            }
             perform(action)
         }
+    }
+
+    private fun wifiDisabled(): Boolean = try {
+        (getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager)
+            ?.isWifiEnabled == false
+    } catch (_: SecurityException) {
+        false
     }
 
     private fun perform(action: PendingAction) {
