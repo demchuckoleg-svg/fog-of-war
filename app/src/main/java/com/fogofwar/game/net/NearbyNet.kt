@@ -733,7 +733,7 @@ class NearbyNet(context: Context) {
                 c.rejectConnection(endpointId)
                 return
             }
-            if (isHost && humans.size + pendingNames.size >= GameConfig.MAX_PLAYERS) {
+            if (isHost && humans.size + pendingNames.size > GameConfig.MAX_PLAYERS) {
                 pendingNames.remove(endpointId)
                 c.rejectConnection(endpointId)
                 return
@@ -935,6 +935,15 @@ class NearbyNet(context: Context) {
                     }
                     mySlot = message.slot
                     sendRaw(endpointId, Protocol.hello(nickname))
+                    val helloToken = connectToken
+                    mainHandler.postDelayed({
+                        if (connectToken == helloToken &&
+                            hostEndpoint == endpointId &&
+                            humans[mySlot] == null
+                        ) {
+                            sendRaw(endpointId, Protocol.hello(nickname))
+                        }
+                    }, 1_500L)
                     notifyLobby()
                 }
                 is NetMessage.Roster -> {
@@ -946,7 +955,7 @@ class NearbyNet(context: Context) {
                     when {
                         message.roomState == RoomState.IN_GAME -> roomState = RoomState.IN_GAME
                         roomState == RoomState.IN_GAME &&
-                            clientRound?.roundFinished != true -> {
+                            clientRound != null && clientRound?.roundFinished != true -> {
                             // A lobby roster that overtook the start message: keep the round.
                             notifyLobby()
                             return
@@ -1012,12 +1021,13 @@ class NearbyNet(context: Context) {
             rejectEndpoint(endpointId, VERSION_MISMATCH_MESSAGE)
             return
         }
-        if (roomState == RoomState.IN_GAME) {
+        val existingSlot = slotByEndpoint[endpointId]
+        if (roomState == RoomState.IN_GAME && existingSlot == null) {
             rejectEndpoint(endpointId, "Идёт бой, зайдите после раунда")
             return
         }
         val slot = pendingSlots.remove(endpointId)
-            ?: slotByEndpoint[endpointId]
+            ?: existingSlot
             ?: return
         val name = message.name.trim().ifBlank {
             pendingNames[endpointId] ?: "Игрок"
@@ -1032,6 +1042,10 @@ class NearbyNet(context: Context) {
         endpointBySlot[slot] = endpointId
         broadcastRoster()
         if (isNew) updateAdvertising()
+        // A client that missed StartRound recovers on its next Hello/rename.
+        if (roomState == RoomState.IN_GAME) {
+            hostRound?.let { sendRaw(endpointId, it.startMessage()) }
+        }
     }
 
     /** Drops an endpoint that speaks an incompatible protocol version. */

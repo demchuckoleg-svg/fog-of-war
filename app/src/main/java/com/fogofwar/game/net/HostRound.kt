@@ -73,6 +73,8 @@ class HostRound(
     private suspend fun loop() {
         try {
             runLoopBody()
+        } catch (c: kotlinx.coroutines.CancellationException) {
+            throw c
         } catch (t: Throwable) {
             net.reportError("Ошибка раунда: ${t.message}")
         } finally {

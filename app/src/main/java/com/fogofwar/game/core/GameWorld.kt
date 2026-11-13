@@ -528,6 +528,8 @@ class GameWorld(
         if (!tank.alive) return
         if (!ignoreInvuln && tank.invuln > 0f) return
         val source = if (sourceSlot >= 0) tank(sourceSlot) else null
+        // A projectile from a disconnected player must not hurt their former allies either.
+        if (rules.teams && sourceSlot >= 0 && source == null) return
         // Team mode: allies cannot hurt each other with bullets, grenades or mines.
         if (rules.teams && source != null && source.team == tank.team) return
         tank.hp -= 1
@@ -601,16 +603,18 @@ class GameWorld(
         if (rules.teams) {
             val stats = HashMap<Int, IntArray>()
             for (tank in tanks) {
-                val entry = stats.getOrPut(tank.team) { IntArray(2) }
+                val entry = stats.getOrPut(tank.team) { IntArray(3) }
                 entry[0] += tank.kills
                 entry[1] += tank.damageDealt
+                entry[2] += tank.lives
             }
             val best = stats.entries.maxWithOrNull(
                 compareBy<Map.Entry<Int, IntArray>> { it.value[0] }
                     .thenBy { it.value[1] }
+                    .thenBy { it.value[2] }
             ) ?: return finishRound(null)
             val tied = stats.values.count {
-                it[0] == best.value[0] && it[1] == best.value[1]
+                it[0] == best.value[0] && it[1] == best.value[1] && it[2] == best.value[2]
             } > 1
             if (tied) return finishRound(null)
             val representative = tanks.filter { it.team == best.key }
