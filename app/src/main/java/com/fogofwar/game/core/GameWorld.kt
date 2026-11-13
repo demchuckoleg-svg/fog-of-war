@@ -599,18 +599,32 @@ class GameWorld(
     /** Time is up: most kills, then damage, then lives; a tie is a draw. */
     private fun finishByScore() {
         if (rules.teams) {
-            val scores = HashMap<Int, Int>()
-            for (tank in tanks) scores[tank.team] = (scores[tank.team] ?: 0) + tank.kills
-            val best = scores.entries.maxByOrNull { it.value } ?: return finishRound(null)
-            if (scores.values.count { it == best.value } > 1) return finishRound(null)
+            val stats = HashMap<Int, IntArray>()
+            for (tank in tanks) {
+                val entry = stats.getOrPut(tank.team) { IntArray(2) }
+                entry[0] += tank.kills
+                entry[1] += tank.damageDealt
+            }
+            val best = stats.entries.maxWithOrNull(
+                compareBy<Map.Entry<Int, IntArray>> { it.value[0] }
+                    .thenBy { it.value[1] }
+            ) ?: return finishRound(null)
+            val tied = stats.values.count {
+                it[0] == best.value[0] && it[1] == best.value[1]
+            } > 1
+            if (tied) return finishRound(null)
             val representative = tanks.filter { it.team == best.key }
-                .maxByOrNull { it.damageDealt * 1000 + it.kills }
+                .maxWithOrNull(
+                    compareByDescending<Tank> { it.kills }
+                        .thenByDescending { it.damageDealt }
+                )
             finishRound(representative)
         } else {
-            val best = tanks.maxByOrNull { it.kills * 1000 + it.damageDealt } ?: return finishRound(null)
-            val tied = tanks.count {
-                it.kills == best.kills && it.damageDealt == best.damageDealt
-            } > 1
+            val comparator = compareByDescending<Tank> { it.kills }
+                .thenByDescending { it.damageDealt }
+                .thenByDescending { it.lives }
+            val best = tanks.maxWithOrNull(comparator) ?: return finishRound(null)
+            val tied = tanks.count { comparator.compare(it, best) == 0 } > 1
             finishRound(if (tied) null else best)
         }
     }

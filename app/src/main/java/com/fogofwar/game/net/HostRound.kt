@@ -71,6 +71,18 @@ class HostRound(
     }
 
     private suspend fun loop() {
+        try {
+            runLoopBody()
+        } catch (t: Throwable) {
+            net.reportError("Ошибка раунда: ${t.message}")
+        } finally {
+            if (!aborted) {
+                net.onHostRoundFinished(this, world.winnerSlot, world.winnerName)
+            }
+        }
+    }
+
+    private suspend fun runLoopBody() {
         var next = System.nanoTime()
         val tickNanos = 1_000_000_000L / GameConfig.TICK_HZ
         val snapshotEvery = (GameConfig.TICK_HZ / GameConfig.SNAPSHOT_HZ).coerceAtLeast(1)
@@ -186,7 +198,6 @@ class HostRound(
             next += tickNanos
             if (now - next > 8 * tickNanos) next = now
         }
-        if (!aborted) net.onHostRoundFinished(this, world.winnerSlot, world.winnerName)
     }
 
     private fun buildFrame(): GameFrame {

@@ -2,6 +2,7 @@ package com.fogofwar.game.net
 
 import com.fogofwar.game.core.EffectEvent
 import com.fogofwar.game.core.EffectKind
+import com.fogofwar.game.core.GameConfig
 import com.fogofwar.game.core.RoundRules
 import com.fogofwar.game.core.Tile
 import com.fogofwar.game.core.TileChange
@@ -183,7 +184,7 @@ object Protocol {
     }
 
     fun kick(slot: Int, reason: String): ByteArray {
-        val b = ByteBuffer.allocate(64)
+        val b = ByteBuffer.allocate(8 + MAX_STRING_BYTES)
         b.put(MSG_KICK.toByte())
         b.put(slot.toByte())
         putString(b, reason)
@@ -421,41 +422,61 @@ object Protocol {
         val tick = b.int.toLong()
 
         val tankCount = b.short.toInt() and 0xFFFF
+        require(tankCount <= GameConfig.MAX_PLAYERS) { "too many tanks" }
         val tanks = ArrayList<TankSnap>(tankCount)
         repeat(tankCount) {
-            tanks.add(
-                TankSnap(
-                    slot = b.get().toInt(),
-                    x = b.float,
-                    y = b.float,
-                    bodyDir = b.float,
-                    turretDir = b.float,
-                    hp = b.get().toInt(),
-                    flags = b.get().toInt() and 0xFF,
-                    grenades = b.get().toInt() and 0xFF,
-                    cooldown = (b.get().toInt() and 0xFF) / 255f,
-                    grenadeRecharge = (b.get().toInt() and 0xFF) / 255f,
-                    team = b.get().toInt() and 0xFF,
-                    lives = b.get().toInt() and 0xFF,
-                    powerLeft = (b.get().toInt() and 0xFF) / 255f,
-                    lightLeft = (b.get().toInt() and 0xFF) / 255f,
+            val slot = b.get().toInt() and 0xFF
+            val x = b.float
+            val y = b.float
+            val bodyDir = b.float
+            val turretDir = b.float
+            val hp = b.get().toInt() and 0xFF
+            val flags = b.get().toInt() and 0xFF
+            val grenades = b.get().toInt() and 0xFF
+            val cooldown = (b.get().toInt() and 0xFF) / 255f
+            val grenadeRecharge = (b.get().toInt() and 0xFF) / 255f
+            val team = b.get().toInt() and 0xFF
+            val lives = b.get().toInt() and 0xFF
+            val powerLeft = (b.get().toInt() and 0xFF) / 255f
+            val lightLeft = (b.get().toInt() and 0xFF) / 255f
+            if (slot < GameConfig.MAX_PLAYERS) {
+                tanks.add(
+                    TankSnap(
+                        slot = slot,
+                        x = x,
+                        y = y,
+                        bodyDir = bodyDir,
+                        turretDir = turretDir,
+                        hp = hp,
+                        flags = flags,
+                        grenades = grenades,
+                        cooldown = cooldown,
+                        grenadeRecharge = grenadeRecharge,
+                        team = team,
+                        lives = lives,
+                        powerLeft = powerLeft,
+                        lightLeft = lightLeft,
+                    )
                 )
-            )
+            }
         }
 
         val bulletCount = b.short.toInt() and 0xFFFF
+        require(bulletCount <= 1024) { "too many bullets" }
         val bullets = ArrayList<BulletSnap>(bulletCount)
         repeat(bulletCount) {
             bullets.add(BulletSnap(b.float, b.float))
         }
 
         val pickupCount = b.short.toInt() and 0xFFFF
+        require(pickupCount <= 128) { "too many pickups" }
         val pickups = ArrayList<PickupSnap>(pickupCount)
         repeat(pickupCount) {
             pickups.add(PickupSnap(b.get().toInt() and 0xFF, b.float, b.float))
         }
 
         val grenadeCount = b.short.toInt() and 0xFFFF
+        require(grenadeCount <= 512) { "too many grenades" }
         val grenades = ArrayList<GrenadeSnap>(grenadeCount)
         repeat(grenadeCount) {
             grenades.add(GrenadeSnap(b.float, b.float, b.get().toInt() != 0, b.get().toInt() and 0xFF))
@@ -466,6 +487,7 @@ object Protocol {
         val sonarActive = b.get().toInt() != 0
 
         val eventCount = b.short.toInt() and 0xFFFF
+        require(eventCount <= 512) { "too many events" }
         val events = ArrayList<EffectEvent>(eventCount)
         repeat(eventCount) {
             val kind = EffectKind.values().getOrElse(b.get().toInt() and 0xFF) { EffectKind.SHOT }
@@ -476,6 +498,7 @@ object Protocol {
         }
 
         val killCount = b.short.toInt() and 0xFFFF
+        require(killCount <= 512) { "too many kills" }
         val kills = ArrayList<KillSnap>(killCount)
         repeat(killCount) {
             kills.add(KillSnap(killer = b.get().toInt(), victim = b.get().toInt() and 0xFF))
@@ -497,6 +520,7 @@ object Protocol {
 
     private fun readTileChanges(b: ByteBuffer): List<TileChange> {
         val count = b.short.toInt() and 0xFFFF
+        require(count <= 4096) { "too many tile changes" }
         val changes = ArrayList<TileChange>(count)
         repeat(count) {
             val index = b.short.toInt() and 0xFFFF
@@ -524,6 +548,7 @@ object Protocol {
 
     private fun readPlayers(b: ByteBuffer): List<PlayerInfo> {
         val count = b.get().toInt() and 0xFF
+        require(count <= GameConfig.MAX_PLAYERS) { "too many players" }
         val out = ArrayList<PlayerInfo>(count)
         repeat(count) {
             val slot = b.get().toInt() and 0xFF

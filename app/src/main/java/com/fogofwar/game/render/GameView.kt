@@ -635,6 +635,7 @@ class GameView @JvmOverloads constructor(
             var bestDist = GameConfig.AUTO_AIM_RANGE
             for (tank in frame.tanks) {
                 if (!tank.alive || tank.slot == frame.mySlot) continue
+                if (isAlly(frame, me, tank)) continue
                 if (!isVisibleToMe(frame, me, tank)) continue
                 val dist = hypot(tank.x - me.x, tank.y - me.y)
                 if (dist < bestDist) {
@@ -687,6 +688,7 @@ class GameView @JvmOverloads constructor(
         if (me != null && me.alive) {
             for (tank in frame.tanks) {
                 if (tank.slot == frame.mySlot || !tank.alive) continue
+                if (isAlly(frame, me, tank)) continue
                 if (isVisibleToMe(frame, me, tank)) {
                     lastSeen[tank.slot] = Seen(tank.x, tank.y, tank.turretDir, now)
                     if (tank.slot in visibleNow.indices) visibleNow[tank.slot] = true
@@ -695,6 +697,9 @@ class GameView @JvmOverloads constructor(
         }
         lastSeen.entries.removeAll { now - it.value.at > GHOST_MS + 1000L }
     }
+
+    private fun isAlly(frame: GameFrame, me: RenderTank?, other: RenderTank): Boolean =
+        me != null && frame.rules.teams && me.team == other.team
 
     private fun lineOfSight(map: TileMap, ax: Float, ay: Float, bx: Float, by: Float): Boolean =
         !map.blocksLightAlong(ax, ay, bx, by)
@@ -995,9 +1000,9 @@ class GameView @JvmOverloads constructor(
     private fun drawTank(canvas: Canvas, frame: GameFrame, tank: RenderTank, now: Long) {
         val isMe = tank.slot == frame.mySlot
         val color = when {
-            frame.rules.teams -> TEAM_COLORS[tank.team % TEAM_COLORS.size]
+            frame.rules.teams -> TEAM_COLORS[((tank.team % TEAM_COLORS.size) + TEAM_COLORS.size) % TEAM_COLORS.size]
             isMe -> COLOR_ME
-            else -> PLAYER_COLORS[tank.slot % PLAYER_COLORS.size]
+            else -> PLAYER_COLORS[((tank.slot % PLAYER_COLORS.size) + PLAYER_COLORS.size) % PLAYER_COLORS.size]
         }
 
         canvas.drawCircle(tank.x + 2f, tank.y + 5f, 13f, shadowPaint)
@@ -1208,8 +1213,10 @@ class GameView @JvmOverloads constructor(
     }
 
     private fun drawEnemyBeams(canvas: Canvas, frame: GameFrame) {
+        val me = frame.me
         for (tank in frame.tanks) {
             if (!tank.alive || tank.slot == frame.mySlot || !tank.lightsOn) continue
+            if (isAlly(frame, me, tank)) continue
             if (tank.x < camera.worldLeft - 400f || tank.x > camera.worldRight + 400f) continue
             if (tank.y < camera.worldTop - 400f || tank.y > camera.worldBottom + 400f) continue
             val range = if (tank.lightBoost) {
@@ -1300,8 +1307,10 @@ class GameView @JvmOverloads constructor(
             return
         }
         if (radius > lastSonarRadius) {
+            val me = frame.me
             for (tank in frame.tanks) {
                 if (tank.slot == frame.mySlot || !tank.alive) continue
+                if (isAlly(frame, me, tank)) continue
                 // Stealth: a stationary tank with its headlight off is invisible to sonar.
                 if (!tank.lightsOn && !tank.moving) continue
                 val dist = hypot(tank.x - center, tank.y - center)
@@ -1536,15 +1545,15 @@ class GameView @JvmOverloads constructor(
             if (frame.results.isNotEmpty()) {
                 val names = frame.players.associate { it.slot to it.name }
                 textPaint.textAlign = Paint.Align.CENTER
-                textPaint.textSize = 13f * scaledDensity
+                textPaint.textSize = 12.5f * scaledDensity
                 textPaint.color = 0xFFE6ECE9.toInt()
-                val top = frame.results.take(5)
+                val top = frame.results
                 for ((index, result) in top.withIndex()) {
                     val name = names[result.slot]
                         ?: frame.tanks.firstOrNull { it.slot == result.slot }?.name
                         ?: "?"
-                    val line = "$name   убийств: ${result.kills}   смертей: ${result.deaths}"
-                    canvas.drawText(line, w / 2f, h / 2f - 18f * density + index * 22f * density, textPaint)
+                    val line = "$name   убийств: ${result.kills}   смертей: ${result.deaths}   урон: ${result.damage}"
+                    canvas.drawText(line, w / 2f, h / 2f - 18f * density + index * 20f * density, textPaint)
                 }
             }
             drawCenteredText(canvas, "возврат в лобби…", h / 2f + 128f * density, 15f, COLOR_DIM)
